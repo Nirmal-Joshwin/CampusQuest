@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "CampusQuest",
+    "slug": "campusquest",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "campusquest",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F172A"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.campusquest.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "CampusQuest needs your location to show campus spawns and trigger AR catching when you are near.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "CampusQuest uses your location to discover creatures around campus.",
+        "NSCameraUsageDescription": "CampusQuest requires camera access for the Augmented Reality creature catching encounter."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F172A"
+      },
+      "package": "com.campusquest.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "CampusQuest needs camera access for AR creature catching."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "CampusQuest uses your location to discover creatures around campus."
+        }
+      ]
+    ]
+  }
+}
