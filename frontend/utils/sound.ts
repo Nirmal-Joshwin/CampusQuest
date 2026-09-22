@@ -1,11 +1,13 @@
 import { Platform } from 'react-native';
-import { Audio } from 'expo-av';
 
-/**
- * Procedural Audio Synthesizer & SFX Engine for CampusQuest
- * Generates lightweight, zero-latency liquid glass and sci-fi audio effects
- * with zero external network dependencies.
- */
+// Safe dynamic loader for Expo Audio to prevent module evaluation crashes
+let nativeCreateAudioPlayer: any = null;
+try {
+  const expoAudio = require('expo-audio');
+  nativeCreateAudioPlayer = expoAudio.createAudioPlayer;
+} catch {
+  // Native audio module not bundled or unsupported on this platform
+}
 
 // Helper to encode PCM audio samples into a base64 WAV Data URI
 function createWavDataUri(sampleRate: number, samples: Float32Array): string {
@@ -175,19 +177,12 @@ const playSoundUri = async (uri: string) => {
         audio.volume = 0.6;
         audio.play().catch(() => {});
       }
-    } else {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: true, volume: 0.7 }
-      );
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync().catch(() => {});
-        }
-      });
+    } else if (nativeCreateAudioPlayer) {
+      const player = nativeCreateAudioPlayer(uri);
+      player.play();
     }
   } catch {
-    // Gracefully handle if audio context is blocked
+    // Gracefully handle if audio context is blocked or unavailable
   }
 };
 

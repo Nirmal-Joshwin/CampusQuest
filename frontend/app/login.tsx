@@ -5,13 +5,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  SafeAreaView,
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { liquidGlass, GLASS_COLORS } from '../styles/liquidGlass';

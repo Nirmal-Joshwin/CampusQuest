@@ -51,7 +51,12 @@
         {
           "locationAlwaysAndWhenInUsePermission": "CampusQuest uses your location to discover creatures around campus."
         }
-      ]
+      ],
+      "expo-asset",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-status-bar",
+      "expo-audio"
     ]
   }
 }

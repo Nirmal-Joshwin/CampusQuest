@@ -6,11 +6,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  SafeAreaView,
   Platform,
   Dimensions,
 } from 'react-native';
-import MapView, { Marker, Circle, Polygon, PROVIDER_DEFAULT } from 'react-native-maps';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import MapView, { Marker, Circle, Polygon, PROVIDER_DEFAULT, Camera } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import {
@@ -227,16 +227,20 @@ export default function MapScreen() {
         });
         setLocation(initialLoc.coords);
 
-        // Center map on user location
+        // Center map on user location with 3D perspective
         if (mapRef.current) {
-          mapRef.current.animateToRegion(
+          mapRef.current.animateCamera(
             {
-              latitude: initialLoc.coords.latitude,
-              longitude: initialLoc.coords.longitude,
-              latitudeDelta: 0.004,
-              longitudeDelta: 0.004,
+              center: {
+                latitude: initialLoc.coords.latitude,
+                longitude: initialLoc.coords.longitude,
+              },
+              pitch: 55,
+              heading: initialLoc.coords.heading || 0,
+              altitude: 380,
+              zoom: 18.5,
             },
-            1000
+            { duration: 1000 }
           );
         }
 
@@ -394,27 +398,37 @@ export default function MapScreen() {
 
 
 
-  // Center map on user
+  // Center map on user in 3D perspective
   const handleCenterOnUser = () => {
     if (mapRef.current) {
       const targetLat = location ? location.latitude : CIT_CENTER.latitude;
       const targetLng = location ? location.longitude : CIT_CENTER.longitude;
-      mapRef.current.animateToRegion(
+      mapRef.current.animateCamera(
         {
-          latitude: targetLat,
-          longitude: targetLng,
-          latitudeDelta: 0.004,
-          longitudeDelta: 0.004,
+          center: { latitude: targetLat, longitude: targetLng },
+          pitch: 55,
+          heading: location?.heading || 0,
+          altitude: 380,
+          zoom: 18.5,
         },
-        700
+        { duration: 700 }
       );
     }
   };
 
-  // Center on entire CIT Campus
+  // Center on entire CIT Campus in 3D perspective
   const handleCenterOnCIT = () => {
     if (mapRef.current) {
-      mapRef.current.animateToRegion(CIT_CENTER, 800);
+      mapRef.current.animateCamera(
+        {
+          center: { latitude: CIT_CENTER.latitude, longitude: CIT_CENTER.longitude },
+          pitch: 50,
+          heading: 0,
+          altitude: 650,
+          zoom: 17,
+        },
+        { duration: 800 }
+      );
     }
   };
 
@@ -477,31 +491,36 @@ export default function MapScreen() {
     );
   }
 
-  const initialRegion = location
-    ? {
-        latitude: location.latitude,
-        longitude: location.longitude,
-        latitudeDelta: 0.005,
-        longitudeDelta: 0.005,
-      }
-    : CIT_CENTER;
+  // Native 3D Isometric MMORPG Camera Configuration (55° tilt angle, 380m altitude)
+  const initialCamera: Camera = {
+    center: location
+      ? { latitude: location.latitude, longitude: location.longitude }
+      : { latitude: CIT_CENTER.latitude, longitude: CIT_CENTER.longitude },
+    pitch: 55,
+    heading: location?.heading || 0,
+    altitude: 380,
+    zoom: 18.5,
+  };
 
   const closestRarityConfig = closestSpawn ? getRarityConfig(closestSpawn.rarity) : null;
 
   return (
     <View style={styles.container}>
-      {/* Stylized Cartoonish Satellite Campus MapView */}
+      {/* 3D Hybrid Satellite Campus MapView with Extruded 3D Buildings */}
       <MapView
         ref={mapRef}
         style={styles.map}
         provider={PROVIDER_DEFAULT}
-        initialRegion={initialRegion}
-        mapType="satellite"
+        initialCamera={initialCamera}
+        mapType="hybrid"
+        showsBuildings={true}
+        pitchEnabled={true}
+        rotateEnabled={true}
         showsUserLocation={false}
         followsUserLocation={false}
         showsMyLocationButton={false}
         showsCompass={true}
-        showsPointsOfInterest={false}
+        showsPointsOfInterests={false}
         customMapStyle={CLEAN_MAP_STYLE}
       >
         {/* CIT Campus Geofence Boundary (User-Marked Blue Perimeter with Liquid Glass Cyan Glow) */}
@@ -919,7 +938,11 @@ const styles = StyleSheet.create({
   map: {
     width: Dimensions.get('window').width,
     height: Dimensions.get('window').height,
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   loadingContainer: {
     flex: 1,
