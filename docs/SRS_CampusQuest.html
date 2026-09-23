@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Software Requirements Specification for CampusQuest</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+  </script>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 20mm 18mm 20mm 18mm;
+      @top-left {
+        content: "Software Requirements Specification for CampusQuest";
+        font-family: "Times New Roman", Times, serif;
+        font-size: 9pt;
+        font-style: italic;
+      }
+      @bottom-right {
+        content: "Page " counter(page);
+        font-family: "Times New Roman", Times, serif;
+        font-size: 10pt;
+      }
+    }
+
+    body {
+      font-family: "Times New Roman", Times, serif;
+      font-size: 11pt;
+      line-height: 1.5;
+      color: #000;
+      margin: 0;
+      padding: 20px 40px;
+      background: #fff;
+    }
+
+    .no-print-bar {
+      background: #070d1e;
+      color: #00ffcc;
+      padding: 12px 20px;
+      border-radius: 6px;
+      margin-bottom: 25px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: sans-serif;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .print-btn {
+      background: #00ffcc;
+      color: #070d1e;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+    .print-btn:hover {
+      background: #33ffdd;
+    }
+
+    @media print {
+      .no-print-bar {
+        display: none !important;
+      }
+      body {
+        padding: 0;
+      }
+      .page-break {
+        page-break-before: always;
+      }
+    }
+
+    .page-break {
+      page-break-before: always;
+    }
+
+    /* Cover Page */
+    .cover-page {
+      height: 90vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+    .cover-title {
+      font-size: 26pt;
+      font-weight: bold;
+      margin-bottom: 8px;
+      line-height: 1.2;
+    }
+    .cover-subtitle {
+      font-size: 16pt;
+      font-style: italic;
+      margin-bottom: 40px;
+      color: #333;
+    }
+    .cover-meta {
+      margin-top: 50px;
+      font-size: 13pt;
+      line-height: 1.8;
+    }
+    .cover-copyright {
+      margin-top: auto;
+      font-size: 9pt;
+      font-style: italic;
+      color: #555;
+    }
+
+    /* Headings */
+    h1 {
+      font-size: 18pt;
+      border-bottom: 1.5px solid #000;
+      padding-bottom: 4px;
+      margin-top: 25px;
+      margin-bottom: 12px;
+    }
+    h2 {
+      font-size: 14pt;
+      margin-top: 18px;
+      margin-bottom: 8px;
+    }
+    h3 {
+      font-size: 12pt;
+      margin-top: 14px;
+      margin-bottom: 6px;
+    }
+    h4 {
+      font-size: 11pt;
+      font-style: italic;
+      margin-top: 10px;
+      margin-bottom: 4px;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 10pt;
+    }
+    table, th, td {
+      border: 1px solid #000;
+    }
+    th {
+      background-color: #f2f2f2;
+      padding: 7px 9px;
+      text-align: left;
+      font-weight: bold;
+    }
+    td {
+      padding: 6px 9px;
+      vertical-align: top;
+    }
+
+    /* Lists & Text */
+    p {
+      margin: 6px 0;
+      text-align: justify;
+    }
+    ul, ol {
+      margin: 6px 0 10px 20px;
+      padding: 0;
+    }
+    li {
+      margin-bottom: 4px;
+    }
+
+    /* Diagrams */
+    .diagram-container {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #ccc;
+      background: #fafafa;
+      text-align: center;
+      border-radius: 4px;
+    }
+    .diagram-caption {
+      margin-top: 10px;
+      font-size: 10pt;
+      font-weight: bold;
+      color: #222;
+    }
+
+    .toc-table td {
+      border: none;
+      padding: 3px 0;
+    }
+    .toc-dots {
+      border-bottom: 1px dotted #666;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="no-print-bar">
+    <span><strong>CampusQuest IEEE 830 SRS Document</strong> — Click to print or export as PDF:</span>
+    <button class="print-btn" onclick="window.print()">🖨️ Save as PDF / Print</button>
+  </div>
+
+  <!-- COVER PAGE -->
+  <div class="cover-page">
+    <div style="width: 100%; border-top: 4px solid #000; margin-bottom: 50px;"></div>
+    
+    <div class="cover-title">Software Requirements<br>Specification</div>
+    <div style="font-size: 14pt; margin: 15px 0;">for</div>
+    <div class="cover-title" style="font-size: 22pt;">CampusQuest: Location-Based Augmented Reality (AR) Campus Exploration & Gamified Engagement System</div>
+    
+    <div class="cover-meta">
+      <p><strong>Version 1.0 approved</strong></p>
+      <p style="margin-top: 35px;"><strong>Prepared by</strong><br>Nirmal Joshwin</p>
+      <p style="margin-top: 25px;"><strong>Coimbatore Institute of Technology</strong></p>
+      <p style="margin-top: 15px;">25-09-2026</p>
+    </div>
+
+    <div class="cover-copyright">
+      Copyright &copy; 1999 by Karl E. Wiegers. Permission is granted to use, modify, and distribute this document.
+    </div>
+  </div>
+
+  <!-- TABLE OF CONTENTS -->
+  <div class="page-break"></div>
+  <h1>Table of Contents</h1>
+  <table class="toc-table" style="width: 100%; border: none;">
+    <tr><td><strong>Table of Contents</strong></td><td style="text-align:right;"><strong>ii</strong></td></tr>
+    <tr><td><strong>Revision History</strong></td><td style="text-align:right;"><strong>ii</strong></td></tr>
+    <tr><td><strong>1. Introduction</strong></td><td style="text-align:right;"><strong>1</strong></td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;1.1 Purpose</td><td style="text-align:right;">1</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;1.2 Document Conventions</td><td style="text-align:right;">1</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;1.3 Intended Audience and Reading Suggestions</td><td style="text-align:right;">1</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;1.4 Product Scope</td><td style="text-align:right;">2</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;1.5 References</td><td style="text-align:right;">2</td></tr>
+    <tr><td><strong>2. Overall Description</strong></td><td style="text-align:right;"><strong>2</strong></td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;2.1 Product Perspective</td><td style="text-align:right;">2</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;2.2 Product Functions</td><td style="text-align:right;">3</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;2.3 User Classes and Characteristics</td><td style="text-align:right;">3</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;2.4 Operating Environment</td><td style="text-align:right;">4</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;2.5 Design and Implementation Constraints</td><td style="text-align:right;">4</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;2.6 User Documentation</td><td style="text-align:right;">4</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;2.7 Assumptions and Dependencies</td><td style="text-align:right;">4</td></tr>
+    <tr><td><strong>3. External Interface Requirements</strong></td><td style="text-align:right;"><strong>5</strong></td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;3.1 User Interfaces</td><td style="text-align:right;">5</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;3.2 Hardware Interfaces</td><td style="text-align:right;">6</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;3.3 Software Interfaces</td><td style="text-align:right;">6</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;3.4 Communications Interfaces</td><td style="text-align:right;">7</td></tr>
+    <tr><td><strong>4. System Features</strong></td><td style="text-align:right;"><strong>7</strong></td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.1 Cadet Registration and Authentication Management</td><td style="text-align:right;">7</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.2 Geospatial 3D Map and Real-Time Radar HUD</td><td style="text-align:right;">8</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.3 Anomaly Encounter and Camera-Based AR Capture</td><td style="text-align:right;">9</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.4 Geofenced Anti-Spoofing and Ray-Casting Boundary Validation</td><td style="text-align:right;">10</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.5 Bestiary Inventory and Companion Buddy System</td><td style="text-align:right;">11</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.6 Armory Shop, Economy, and Campus Loot Drops</td><td style="text-align:right;">12</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.7 Multiplayer Peer Discovery, Radar Pings, and Tag-Team Raids</td><td style="text-align:right;">13</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;4.8 Administrator Spatial Telemetry and Anomaly Spawning</td><td style="text-align:right;">14</td></tr>
+    <tr><td><strong>5. Other Nonfunctional Requirements</strong></td><td style="text-align:right;"><strong>15</strong></td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;5.1 Performance Requirements</td><td style="text-align:right;">15</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;5.2 Safety Requirements</td><td style="text-align:right;">16</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;5.3 Security Requirements</td><td style="text-align:right;">16</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;5.4 Software Quality Attributes</td><td style="text-align:right;">17</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;5.5 Business Rules</td><td style="text-align:right;">18</td></tr>
+    <tr><td><strong>6. Other Requirements</strong></td><td style="text-align:right;"><strong>19</strong></td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;6.1 Database Requirements</td><td style="text-align:right;">19</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;6.2 Backup and Recovery Requirements</td><td style="text-align:right;">20</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;6.3 Legal and Privacy Requirements</td><td style="text-align:right;">20</td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;6.4 Future Enhancements</td><td style="text-align:right;">20</td></tr>
+    <tr><td><strong>Appendix A: Glossary</strong></td><td style="text-align:right;"><strong>21</strong></td></tr>
+    <tr><td><strong>Appendix B: Analysis Models (UML Diagrams)</strong></td><td style="text-align:right;"><strong>22</strong></td></tr>
+    <tr><td><strong>Appendix C: To Be Determined (TBD) List</strong></td><td style="text-align:right;"><strong>31</strong></td></tr>
+  </table>
+
+  <h2>Revision History</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:25%;">Name</th>
+        <th style="width:20%;">Date</th>
+        <th style="width:40%;">Reason For Changes</th>
+        <th style="width:15%;">Version</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Nirmal Joshwin</td><td>29-08-2026</td><td>Initial draft of SRS for CampusQuest core location services and bestiary</td><td>0.1</td></tr>
+      <tr><td>Nirmal Joshwin</td><td>04-09-2026</td><td>Added 23-point ray-casting geofence, loot crates, and multiplayer tag-team raids</td><td>0.5</td></tr>
+      <tr><td>Nirmal Joshwin</td><td>22-09-2026</td><td>Integrated 3D isometric map, Expo SDK 57, and safe area context refactoring</td><td>0.9</td></tr>
+      <tr><td>Nirmal Joshwin</td><td>25-09-2026</td><td>Finalized IEEE 830-compliant SRS with complete analysis models for approval</td><td>1.0 approved</td></tr>
+    </tbody>
+  </table>
+
+  <!-- SECTION 1 -->
+  <div class="page-break"></div>
+  <h1>1. Introduction</h1>
+
+  <h2>1.1 Purpose</h2>
+  <p>This Software Requirements Specification (SRS) document describes the complete requirements for Version 1.0 of <strong>CampusQuest: Location-Based Augmented Reality (AR) Campus Exploration & Gamified Engagement System</strong>. The objective of this document is to define the functional, non-functional, behavioral, and architectural requirements of the system and establish a rigorous baseline for development, validation, and academic evaluation at <strong>Coimbatore Institute of Technology (CIT)</strong>.</p>
+
+  <h2>1.2 Document Conventions</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Convention</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>CampusQuest / CQ</strong></td><td>CampusQuest Augmented Reality Geolocation Gaming System</td></tr>
+      <tr><td><strong>SRS</strong></td><td>Software Requirements Specification (IEEE Std 830-1998 / IEEE 29148-2018)</td></tr>
+      <tr><td><strong>AR</strong></td><td>Augmented Reality (optical camera overlay with interactive spatial entities)</td></tr>
+      <tr><td><strong>HUD</strong></td><td>Heads-Up Display (overlay interface on mobile display showing game stats)</td></tr>
+      <tr><td><strong>GPS</strong></td><td>Global Positioning System</td></tr>
+      <tr><td><strong>CIT</strong></td><td>Coimbatore Institute of Technology, Coimbatore, Tamil Nadu, India</td></tr>
+      <tr><td><strong>JWT</strong></td><td>JSON Web Token (RFC 7519)</td></tr>
+      <tr><td><strong>Haversine</strong></td><td>Geodesic distance calculation formula on spherical geoids</td></tr>
+      <tr><td><strong>PIP</strong></td><td>Point-in-Polygon ray-casting algorithm used for campus geofence validation</td></tr>
+      <tr><td><strong>RBAC</strong></td><td>Role-Based Access Control (Student Cadet vs. Administrator)</td></tr>
+      <tr><td><strong>XP</strong></td><td>Experience Points earned through exploration and anomaly captures</td></tr>
+    </tbody>
+  </table>
+
+  <h2>1.3 Intended Audience and Reading Suggestions</h2>
+  <p>This document is intended for project supervisors, system evaluators, software engineers, security auditors, campus administrators, and end-user students. Developers should consult Section 3 (External Interfaces) and Section 4 (System Features). Testers and evaluators should inspect Section 5 (Nonfunctional Requirements) and the UML analysis models in Appendix B.</p>
+
+  <h2>1.4 Product Scope</h2>
+  <p>CampusQuest is a mobile multiplayer location-based MMORPG and campus discovery platform engineered specifically for the Coimbatore Institute of Technology campus. The application transforms the physical 25-acre CIT campus into an interactive digital augmented reality realm. Students physically navigate the campus grounds to detect cybernetic anomalies, uncover historical and academic lore at canonical landmarks, collect quantum loot caches, participate in collaborative multiplayer tag-team raids, and compete on department leaderboards. By tying gameplay mechanics directly to physical movement within validated geographic boundaries, CampusQuest fosters active student wellness, peer collaboration, campus spatial orientation, and inter-departmental community engagement.</p>
+
+  <h2>1.5 References</h2>
+  <ol>
+    <li>IEEE Std 29148-2018, <em>Systems and Software Engineering — Life Cycle Processes — Requirements Engineering</em>, IEEE Computer Society, 2018.</li>
+    <li>IEEE Std 830-1998, <em>IEEE Recommended Practice for Software Requirements Specifications</em>, IEEE Computer Society, 1998.</li>
+    <li>Sommerville, Ian, <em>Software Engineering</em>, 10th Edition, Pearson Education, 2015.</li>
+    <li>Pressman, Roger S. and Maxim, Bruce R., <em>Software Engineering: A Practitioner's Approach</em>, 9th Edition, McGraw-Hill Education, 2019.</li>
+    <li>Wiegers, Karl E. and Beatty, Joy, <em>Software Requirements</em>, 3rd Edition, Microsoft Press, 2013.</li>
+  </ol>
+
+  <!-- SECTION 2 -->
+  <div class="page-break"></div>
+  <h1>2. Overall Description</h1>
+
+  <h2>2.1 Product Perspective</h2>
+  <p>CampusQuest operates as a distributed client-server ecosystem connecting mobile student clients with a high-performance backend server, spatial verification engines, and cloud vector map providers. The system replaces passive campus navigation with an active, gamified location-based exploration platform.</p>
+
+  <h2>2.2 Product Functions</h2>
+  <ul>
+    <li>Provides secure role-based authentication with institutional department selection (CSE, ECE, MECH, CIVIL, IT, AI&DS).</li>
+    <li>Renders an interactive 3D vector map with 55&deg; camera tilt and volumetric building extrusion rendering.</li>
+    <li>Computes real-time geodesic distances using the Haversine formula triggering encounters within 15 meters.</li>
+    <li>Validates all client interactions against an immutable 23-point CIT campus polygon using ray-casting geometry.</li>
+    <li>Provides an optical AR camera viewfinder with animated capture reticles and procedural audio.</li>
+    <li>Maintains a persistent Bestiary inventory of captured anomalies with companion buddy equipping.</li>
+    <li>Simulates an in-game Campus Data Credit economy with collectible quantum loot crates and an armory shop.</li>
+    <li>Supports real-time multiplayer proximity discovery, radar pinging, and cooperative tag-team raids.</li>
+    <li>Equips administrators with spatial telemetry, player density monitoring, and dynamic spawn manipulation.</li>
+  </ul>
+
+  <h2>2.3 User Classes and Characteristics</h2>
+  <ul>
+    <li><strong>Student Cadet:</strong> Enrolled students who use the mobile application to explore campus, discover anomalies, and participate in squad challenges.</li>
+    <li><strong>Administrator / Gamemaster:</strong> Faculty coordinators or game masters with privileged access to telemetry dashboards, spawn population, and cheating audits.</li>
+    <li><strong>Peer Cadet / Squad Member:</strong> Concurrent players discovered in proximity for tag-team raids and mutual radar beaconing.</li>
+  </ul>
+
+  <h2>2.4 Operating Environment</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 30%;">Component</th>
+        <th>Specification</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Operating System</td><td>Android 10.0+ / iOS 15.0+ running Expo Go SDK 57 or native standalone binary</td></tr>
+      <tr><td>Mobile Client Framework</td><td>React Native 0.86.3, Expo 57.0.26, React 19.2.3, TypeScript 5.x</td></tr>
+      <tr><td>Map Engine</td><td>react-native-maps (Google Maps / Apple MapKit) with 3D Vector Building Extrusions</td></tr>
+      <tr><td>Backend Server</td><td>Python 3.12 LTS, FastAPI 0.115+, Uvicorn ASGI Server</td></tr>
+      <tr><td>Database</td><td>SQLite 3 (Development) / PostgreSQL 16 (Production) via SQLAlchemy ORM</td></tr>
+      <tr><td>Hardware Sensors</td><td>A-GPS / GLONASS receiver, rear optical camera (1080p@30fps), 3-axis accelerometer/gyroscope</td></tr>
+      <tr><td>Development Tools</td><td>Visual Studio Code, Git, Android Studio / Xcode Simulator</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2.5 Design and Implementation Constraints</h2>
+  <ul>
+    <li><strong>Geographic Boundary:</strong> Gameplay is strictly confined to the digitized 23-point perimeter of Coimbatore Institute of Technology (11.0254&deg;N &ndash; 11.0305&deg;N, 77.0259&deg;E &ndash; 77.0291&deg;E).</li>
+    <li><strong>GPS Jitter Buffer:</strong> A 15-meter buffer margin is enforced along boundary edges to accommodate satellite multipath errors near multi-story academic buildings.</li>
+    <li><strong>Safe Area Context:</strong> All screens strictly utilize <code>react-native-safe-area-context</code> for notch and gesture bar accommodation.</li>
+  </ul>
+
+  <h2>2.6 User Documentation</h2>
+  <ul>
+    <li>Cadet Field Guide (in-app onboarding tutorial).</li>
+    <li>Administrator Spatial Operations Manual.</li>
+    <li>Interactive OpenAPI/Swagger documentation hosted natively at <code>/docs</code>.</li>
+  </ul>
+
+  <h2>2.7 Assumptions and Dependencies</h2>
+  <ul>
+    <li>Cadet devices have active GNSS location services enabled with High Accuracy mode.</li>
+    <li>Camera permissions are granted for AR viewfinder rendering.</li>
+    <li>Campus Wi-Fi or cellular 4G/5G data connectivity is operational.</li>
+  </ul>
+
+  <!-- SECTION 3 -->
+  <div class="page-break"></div>
+  <h1>3. External Interface Requirements</h1>
+
+  <h2>3.1 User Interfaces</h2>
+  <p>The interface implements a high-contrast Cyber-Glass visual theme with liquid translucent panels optimized for outdoor sunlight visibility:</p>
+  <ul>
+    <li><strong>Authentication Screen (<code>login.tsx</code>):</strong> Tabbed login/registration with institutional department picker.</li>
+    <li><strong>3D Tactical Map HUD (<code>index.tsx</code>):</strong> 55&deg; pitched 3D hybrid map with extruded buildings, custom cadet marker, 15m radar circles, compass heading indicator, and centering controls.</li>
+    <li><strong>AR Viewfinder & Catch Arena (<code>catch.tsx</code>):</strong> Live camera viewfinder rendering floating 3D anomalies, targeting reticles, capture slider, and procedural sound feedback.</li>
+    <li><strong>Bestiary & Inventory Hub (<code>inventory.tsx</code>):</strong> Tabbed catalog of captured anomalies, lore descriptions, and "Set as Active Buddy" controls.</li>
+    <li><strong>Cadet Squad & Radar (<code>friends.tsx</code>):</strong> Real-time proximity list, one-tap radar ping broadcasting, and friend management.</li>
+    <li><strong>Campus Armory (<code>shop.tsx</code>):</strong> Item merchant offering capture modules, energy cells, and avatar titles.</li>
+    <li><strong>Administrator Console (<code>admin.tsx</code>):</strong> Telemetry counters, spawn repopulation triggers, and campus reset utilities.</li>
+  </ul>
+
+  <h2>3.2 Hardware Interfaces</h2>
+  <ul>
+    <li><strong>GNSS Receiver:</strong> Sampled periodically to acquire real-world latitude, longitude, and heading.</li>
+    <li><strong>Optical Camera:</strong> Accessed at 30fps to render real-world background video during AR encounters.</li>
+    <li><strong>Haptic Engine:</strong> Triggers tactile vibrations on taps, successful captures, and out-of-bounds alerts.</li>
+    <li><strong>Audio Hardware:</strong> Outputs procedurally synthesized WebAudio sound effects.</li>
+  </ul>
+
+  <h2>3.3 Software Interfaces</h2>
+  <ul>
+    <li><strong>FastAPI & Uvicorn:</strong> High-speed ASGI server delivering sub-millisecond serialization.</li>
+    <li><strong>SQLAlchemy ORM:</strong> Object-relational mapping with foreign-key enforcement.</li>
+    <li><strong>Expo Modules:</strong> <code>expo-camera</code>, <code>expo-location</code>, <code>expo-audio</code>, and <code>expo-haptics</code>.</li>
+  </ul>
+
+  <h2>3.4 Communications Interfaces</h2>
+  <ul>
+    <li><strong>Protocol:</strong> HTTPS / TLS 1.3 for encrypted client-server exchanges.</li>
+    <li><strong>Authentication:</strong> Bearer tokens transmitting HMAC-SHA256 signed JWTs.</li>
+    <li><strong>Format:</strong> UTF-8 encoded JSON conforming to strict Pydantic models.</li>
+  </ul>
+
+  <!-- SECTION 4 -->
+  <div class="page-break"></div>
+  <h1>4. System Features</h1>
+
+  <h2>4.1 Cadet Registration and Authentication Management</h2>
+  <p><strong>Priority: High</strong><br>Enables students to register with institutional credentials, select their academic department, and securely authenticate.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-001</strong></td><td>The system shall allow new cadets to register with email, username, department, and password.</td></tr>
+      <tr><td><strong>REQ-002</strong></td><td>The system shall validate username formats against the pattern <code>^[a-zA-Z0-9_.-]+$</code>.</td></tr>
+      <tr><td><strong>REQ-003</strong></td><td>The system shall reject duplicate email addresses or usernames with HTTP 400 Bad Request.</td></tr>
+      <tr><td><strong>REQ-004</strong></td><td>The system shall authenticate user credentials using BCrypt hashing and issue signed JWT bearer tokens.</td></tr>
+      <tr><td><strong>REQ-005</strong></td><td>The system shall persist student session state and automatically redirect authenticated users to the Map HUD.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.2 Geospatial 3D Map and Real-Time Radar HUD</h2>
+  <p><strong>Priority: High</strong><br>Renders an interactive 3D perspective of Coimbatore Institute of Technology with extruded buildings and entity pins.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-006</strong></td><td>The system shall render an isometric 3D map with forward pitch of 55&deg; and altitude of 380m.</td></tr>
+      <tr><td><strong>REQ-007</strong></td><td>The system shall automatically extrude volumetric 3D building footprints using vector tile map layers.</td></tr>
+      <tr><td><strong>REQ-008</strong></td><td>The system shall display the player's position using a custom Cadet marker and interaction radar circle.</td></tr>
+      <tr><td><strong>REQ-009</strong></td><td>The system shall render canonical story spawns and dynamic loot crates within the CIT campus perimeter.</td></tr>
+      <tr><td><strong>REQ-010</strong></td><td>The system shall compute real-time geodesic distances using the Haversine formula and update UI indicators.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.3 Anomaly Encounter and Camera-Based AR Capture</h2>
+  <p><strong>Priority: High</strong><br>Enables cadets within 15 meters of an anomaly to initiate an optical AR encounter and execute capture mini-games.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-011</strong></td><td>The system shall restrict AR encounter initiation to instances where cadet-anomaly distance is &le; 15m.</td></tr>
+      <tr><td><strong>REQ-012</strong></td><td>The system shall stream live camera frames at 30fps as the background canvas for AR encounters.</td></tr>
+      <tr><td><strong>REQ-013</strong></td><td>The system shall render animated targeting reticles and interactive capture controls over the optical feed.</td></tr>
+      <tr><td><strong>REQ-014</strong></td><td>The system shall compute capture success probabilities determined by creature rarity tier and cadet level.</td></tr>
+      <tr><td><strong>REQ-015</strong></td><td>The system shall award experience points (100 to 500 XP) and Data Credits upon successful capture.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.4 Geofenced Anti-Spoofing and Ray-Casting Boundary Validation</h2>
+  <p><strong>Priority: High</strong><br>Enforces strict spatial security rules preventing unauthorized captures from outside CIT campus boundaries.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-016</strong></td><td>The system shall maintain an immutable 23-vertex polygon perimeter defining the CIT campus.</td></tr>
+      <tr><td><strong>REQ-017</strong></td><td>The system shall evaluate capture coordinates using an algebraic Ray-Casting Point-in-Polygon (PIP) algorithm.</td></tr>
+      <tr><td><strong>REQ-018</strong></td><td>The system shall incorporate a calibrated 15-meter buffer margin along boundary edges to mitigate GPS jitter.</td></tr>
+      <tr><td><strong>REQ-019</strong></td><td>The system shall reject any capture or loot collection occurring outside campus boundaries with HTTP 400.</td></tr>
+      <tr><td><strong>REQ-020</strong></td><td>The system shall validate coordinates at the Pydantic schema level to block out-of-region spoofing with HTTP 422.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.5 Bestiary Inventory and Companion Buddy System</h2>
+  <p><strong>Priority: Medium</strong><br>Catalogs all anomalies captured by the student and permits designating an active roaming companion.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-021</strong></td><td>The system shall record captured anomaly records linked to the student's unique user ID.</td></tr>
+      <tr><td><strong>REQ-022</strong></td><td>The system shall display total unique discoveries versus total available campus species.</td></tr>
+      <tr><td><strong>REQ-023</strong></td><td>The system shall categorize Bestiary entries into Common, Rare, Epic, and Legendary rarity tiers.</td></tr>
+      <tr><td><strong>REQ-024</strong></td><td>The system shall permit students to equip any captured creature as their active roaming buddy companion.</td></tr>
+      <tr><td><strong>REQ-025</strong></td><td>The system shall render the active buddy companion alongside the cadet marker on the 3D map HUD.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.6 Armory Shop, Economy, and Campus Loot Drops</h2>
+  <p><strong>Priority: Medium</strong><br>Maintains in-game currency balances and permits cadets to harvest quantum loot crates or purchase equipment.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-026</strong></td><td>The system shall spawn collectible quantum loot crates at designated campus sectors.</td></tr>
+      <tr><td><strong>REQ-027</strong></td><td>The system shall reward cadets with Energy recharge cells or Data Credits upon opening loot crates within 15m.</td></tr>
+      <tr><td><strong>REQ-028</strong></td><td>The system shall maintain an Armory catalog with configurable item categories (Supplies, Buffs, Honor Titles).</td></tr>
+      <tr><td><strong>REQ-029</strong></td><td>The system shall verify adequate credit balances prior to authorizing armory transactions.</td></tr>
+      <tr><td><strong>REQ-030</strong></td><td>The system shall atomically deduct currency and credit inventory items upon confirmed purchase.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.7 Multiplayer Peer Discovery, Radar Pings, and Tag-Team Raids</h2>
+  <p><strong>Priority: High</strong><br>Facilitates collaborative gameplay by discovering active cadets in physical proximity and enabling joint raids.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-031</strong></td><td>The system shall compute real-time proximity to discover active peer cadets across campus sectors.</td></tr>
+      <tr><td><strong>REQ-032</strong></td><td>The system shall allow cadets to search for other students by username and manage friendship links.</td></tr>
+      <tr><td><strong>REQ-033</strong></td><td>The system shall enable cadets to dispatch instant radar pings alerting friends to nearby rare spawns.</td></tr>
+      <tr><td><strong>REQ-034</strong></td><td>The system shall support multi-user Tag-Team Raid lobbies for synchronized Legendary anomaly battles.</td></tr>
+      <tr><td><strong>REQ-035</strong></td><td>The system shall distribute bonus XP and exclusive titles to all participants in successful group raids.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.8 Administrator Spatial Telemetry and Anomaly Spawning</h2>
+  <p><strong>Priority: High</strong><br>Equips institutional coordinators with a command dashboard to monitor player density and trigger campus events.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>REQ-036</strong></td><td>The system shall provide an Administrator Telemetry Console restricted to users with role="ADMIN".</td></tr>
+      <tr><td><strong>REQ-037</strong></td><td>The system shall display aggregate metrics including total registered cadets, total captures, and active spawns.</td></tr>
+      <tr><td><strong>REQ-038</strong></td><td>The system shall permit administrators to trigger automated spawn generation across calibrated campus sectors.</td></tr>
+      <tr><td><strong>REQ-039</strong></td><td>The system shall provide an administrative reset mechanism to purge test captures and restore pristine campus state.</td></tr>
+      <tr><td><strong>REQ-040</strong></td><td>The system shall strictly enforce role-based access control, rejecting non-admin attempts with HTTP 403 Forbidden.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- SECTION 5 -->
+  <div class="page-break"></div>
+  <h1>5. Other Nonfunctional Requirements</h1>
+
+  <h2>5.1 Performance Requirements</h2>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Statement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>NFR-001</strong></td><td>The system shall authenticate user credentials and issue a JWT within 1.5 seconds.</td></tr>
+      <tr><td><strong>NFR-002</strong></td><td>The 3D Tactical Map HUD shall load and render extruded buildings within 3.0 seconds on launch.</td></tr>
+      <tr><td><strong>NFR-003</strong></td><td>The geodesic distance calculation to nearby spawns shall execute in &lt; 50 milliseconds on mobile hardware.</td></tr>
+      <tr><td><strong>NFR-004</strong></td><td>The server-side ray-casting Point-in-Polygon validation shall execute in &lt; 10 milliseconds per request.</td></tr>
+      <tr><td><strong>NFR-005</strong></td><td>The backend server shall support at least 500 concurrent active student connections with latency &lt; 200ms.</td></tr>
+      <tr><td><strong>NFR-006</strong></td><td>The AR camera viewfinder shall maintain a stable rendering frame rate of at least 30 frames per second.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5.2 Safety Requirements</h2>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Statement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>NFR-007</strong></td><td>The system shall display a mandatory pedestrian safety warning banner on launch reminding cadets to remain alert.</td></tr>
+      <tr><td><strong>NFR-008</strong></td><td>The system shall strictly prohibit the placement of anomaly spawns on active roadways or construction zones.</td></tr>
+      <tr><td><strong>NFR-009</strong></td><td>The system shall disengage camera AR mini-games if rapid vehicular transit speed (&gt; 25 km/h) is detected.</td></tr>
+      <tr><td><strong>NFR-010</strong></td><td>The system shall enforce a 15-meter interaction radius so cadets can interact without entering restricted zones.</td></tr>
+      <tr><td><strong>NFR-011</strong></td><td>The mobile client shall throttle GPS sampling when battery charge falls below 15% to avoid sudden shutdown.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5.3 Security Requirements</h2>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Statement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>NFR-012</strong></td><td>Passwords shall be hashed using BCrypt with a work factor &ge; 12 prior to database persistence.</td></tr>
+      <tr><td><strong>NFR-013</strong></td><td>All client-server exchanges shall be encrypted using TLS 1.3 to prevent eavesdropping.</td></tr>
+      <tr><td><strong>NFR-014</strong></td><td>API endpoints shall require a valid JWT Bearer token signed with HMAC-SHA256 and an environment secret.</td></tr>
+      <tr><td><strong>NFR-015</strong></td><td>Role-Based Access Control (RBAC) shall enforce complete separation between Student Cadets and Administrators.</td></tr>
+      <tr><td><strong>NFR-016</strong></td><td>All incoming text payloads shall be sanitized against regular expressions to prevent injection exploits.</td></tr>
+      <tr><td><strong>NFR-017</strong></td><td>Spatial coordinates shall undergo dual validation: Pydantic schema bounds followed by ray-casting verification.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5.4 Software Quality Attributes</h2>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Statement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>NFR-018</strong></td><td>The system shall provide a uniform responsive graphical interface across varied mobile screen resolutions.</td></tr>
+      <tr><td><strong>NFR-019</strong></td><td>The database layer shall preserve ACID transactional guarantees across capture recordings and credit transfers.</td></tr>
+      <tr><td><strong>NFR-020</strong></td><td>The frontend architecture shall follow clean component segregation supporting effortless addition of new mini-games.</td></tr>
+      <tr><td><strong>NFR-021</strong></td><td>The backend shall return structured, machine-readable JSON error responses for all HTTP 4xx and 5xx conditions.</td></tr>
+      <tr><td><strong>NFR-022</strong></td><td>The codebase shall maintain zero TypeScript compilation errors and pass all automated security test suites.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5.5 Business Rules</h2>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Rule ID</th><th>Business Rule Statement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>BR-001</strong></td><td>Only students and faculty with valid institutional registrations may participate in campus anomaly hunts.</td></tr>
+      <tr><td><strong>BR-002</strong></td><td>An anomaly capture is valid if and only if the cadet's GPS coordinates fall within the CIT polygon and within 15m of the spawn.</td></tr>
+      <tr><td><strong>BR-003</strong></td><td>Each anomaly spawn may only be captured once per student per spawn cycle to prevent XP farming.</td></tr>
+      <tr><td><strong>BR-004</strong></td><td>A student's Energy gauge decreases by 10 units per capture attempt and automatically regenerates at 1 unit per minute.</td></tr>
+      <tr><td><strong>BR-005</strong></td><td>Campus loot crates refresh at 06:00 and 18:00 daily across designated open campus sectors.</td></tr>
+      <tr><td><strong>BR-006</strong></td><td>Student Cadets cannot access administrative telemetry or invoke spawn manipulation endpoints under any circumstance.</td></tr>
+      <tr><td><strong>BR-007</strong></td><td>Active roaming buddy companions grant a passive +10% bonus to experience points earned within their home sector.</td></tr>
+      <tr><td><strong>BR-008</strong></td><td>In-game Data Credits cannot be purchased with real fiat currency and are strictly earned through campus exploration.</td></tr>
+      <tr><td><strong>BR-009</strong></td><td>Tag-Team Raids require a minimum squad size of 2 cadets located within 30 meters of the raid beacon.</td></tr>
+      <tr><td><strong>BR-010</strong></td><td>Leaderboards compute cumulative student XP and department rankings, updating every 15 minutes.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- SECTION 6 -->
+  <div class="page-break"></div>
+  <h1>6. Other Requirements</h1>
+
+  <h2>6.1 Database Requirements</h2>
+  <p>The system utilizes a relational database structure with foreign-key referential integrity across users, captures, spawns, and friendships.</p>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Requirement ID</th><th>Requirement Statement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>DB-001</strong></td><td>The database shall enforce unique constraints on email and username columns in the users table.</td></tr>
+      <tr><td><strong>DB-002</strong></td><td>Foreign key constraints shall link captures.user_id to users.id with cascading integrity.</td></tr>
+      <tr><td><strong>DB-003</strong></td><td>Primary keys across all tables shall utilize UUIDv4 36-character string identifiers.</td></tr>
+      <tr><td><strong>DB-004</strong></td><td>The database shall store GPS coordinates using double-precision floating-point format (Float).</td></tr>
+      <tr><td><strong>DB-005</strong></td><td>Timestamps across all tables shall be stored in UTC format using ISO 8601 representation.</td></tr>
+      <tr><td><strong>DB-006</strong></td><td>Database queries for nearby spawns shall utilize indexing on coordinate and sector columns.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>6.2 Backup and Recovery Requirements</h2>
+  <p>The system shall execute daily automated snapshots of the database file, with point-in-time recovery capabilities and automatic reconnection upon backend service restarts.</p>
+
+  <h2>6.3 Legal and Privacy Requirements</h2>
+  <p>Location data is evaluated ephemerally in memory to verify geofence containment and distance, and is never logged as continuous tracking paths. Student data is protected in full compliance with institutional privacy policies.</p>
+
+  <h2>6.4 Future Enhancements</h2>
+  <p>Future releases will incorporate Bluetooth Low Energy (BLE) direct peer battles, depth-mesh occlusion behind physical trees/pillars, and dynamic AI quest generation.</p>
+
+  <!-- APPENDIX A -->
+  <div class="page-break"></div>
+  <h1>Appendix A: Glossary</h1>
+  <table>
+    <thead>
+      <tr><th style="width:25%;">Term</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>CampusQuest</strong></td><td>Location-based augmented reality mobile game developed for Coimbatore Institute of Technology.</td></tr>
+      <tr><td><strong>Cadet</strong></td><td>An enrolled student player navigating the campus environment.</td></tr>
+      <tr><td><strong>Anomaly</strong></td><td>A virtual cybernetic creature spawned at a campus coordinate that can be captured in AR mode.</td></tr>
+      <tr><td><strong>Bestiary</strong></td><td>The digital compendium cataloging all captured anomalies, their lore, stats, and capture locations.</td></tr>
+      <tr><td><strong>Geofence</strong></td><td>A digital boundary enclosing physical geographical coordinates (the 23-point CIT campus polygon).</td></tr>
+      <tr><td><strong>Ray-Casting Algorithm</strong></td><td>A computational geometry algorithm casting an imaginary horizontal ray to test whether a point lies within a polygon.</td></tr>
+      <tr><td><strong>Haversine Formula</strong></td><td>Mathematical equation calculating the shortest spherical surface distance between two latitude/longitude coordinates.</td></tr>
+      <tr><td><strong>Loot Crate</strong></td><td>A virtual supply cache scattered across campus yielding Energy refills, Data Credits, or bonus XP.</td></tr>
+      <tr><td><strong>Buddy Companion</strong></td><td>A captured creature equipped by the cadet to accompany their digital avatar across the map HUD.</td></tr>
+      <tr><td><strong>Tag-Team Raid</strong></td><td>A cooperative multiplayer encounter where nearby cadets jointly battle an Epic or Legendary anomaly.</td></tr>
+      <tr><td><strong>Data Credits</strong></td><td>The in-game currency earned by completing quests, capturing anomalies, and opening loot crates.</td></tr>
+      <tr><td><strong>Armory</strong></td><td>The in-game merchant interface where cadets acquire capture boosters, energy packs, and prestige titles.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- APPENDIX B -->
+  <div class="page-break"></div>
+  <h1>Appendix B: Analysis Models (UML Diagrams)</h1>
+  <p>The following formal analysis models illustrate the behavioral, structural, and architectural designs of the CampusQuest ecosystem.</p>
+
+  <h2>Figure 1: Use Case Diagram of CampusQuest System</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart LR
+    Cadet((Student Cadet))
+    Admin((Campus Admin))
+
+    subgraph CampusQuest System
+        UC1[Register & Login]
+        UC2[View 3D Tactical Map]
+        UC3[Detect Nearby Anomaly]
+        UC4[Initiate AR Camera Capture]
+        UC5[Harvest Campus Loot Crate]
+        UC6[View Bestiary & Assign Buddy]
+        UC7[Purchase Items in Armory]
+        UC8[Broadcast Peer Radar Ping]
+        UC9[Join Tag-Team Raid]
+        UC10[Monitor Campus Spatial Telemetry]
+        UC11[Repopulate Anomaly Spawns]
+        UC12[Audit Anti-Spoofing Security Logs]
+    end
+
+    Cadet --> UC1
+    Cadet --> UC2
+    Cadet --> UC3
+    Cadet --> UC4
+    Cadet --> UC5
+    Cadet --> UC6
+    Cadet --> UC7
+    Cadet --> UC8
+    Cadet --> UC9
+
+    Admin --> UC1
+    Admin --> UC10
+    Admin --> UC11
+    Admin --> UC12
+    </div>
+    <div class="diagram-caption">Figure 1: Use Case Model for Student Cadets and Campus Administrators</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 2: Data Flow Diagrams of CampusQuest System</h2>
+  
+  <h3>Level 0 DFD (Context Diagram)</h3>
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart TD
+    Cadet[Student Cadet]
+    Admin[Campus Administrator]
+    GPS[Device GPS Receiver]
+    Cam[Device Camera]
+    System((CampusQuest Core System))
+    DB[(CampusQuest Database)]
+
+    Cadet -->|Credentials & Capture Actions| System
+    System -->|HUD State, Bestiary, & Rewards| Cadet
+
+    Admin -->|Spawn Commands & Admin Credentials| System
+    System -->|Telemetry Metrics & Audit Logs| Admin
+
+    GPS -->|Raw Latitude, Longitude, & Heading| System
+    Cam -->|Optical Video Stream| System
+
+    System -->|Read/Write Operations| DB
+    DB -->|Persisted Player & Game State| System
+    </div>
+    <div class="diagram-caption">Figure 2a: Level 0 Context Data Flow Diagram</div>
+  </div>
+
+  <h3>Level 1 DFD (Decomposed Functional Modules)</h3>
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart TD
+    Cadet[Student Cadet]
+    Admin[Campus Administrator]
+
+    P1(1.0 Auth & Session Management)
+    P2(2.0 Geodesic & Ray-Casting Engine)
+    P3(3.0 AR Encounter & Capture Engine)
+    P4(4.0 Inventory, Economy & Bestiary)
+    P5(5.0 Multiplayer Raid Coordinator)
+    P6(6.0 Spatial Telemetry & Spawn Admin)
+
+    D1[(Users Table)]
+    D2[(Captures Table)]
+    D3[(Spawns Table)]
+    D4[(Loot Crates Table)]
+    D5[(Friendships Table)]
+
+    Cadet -->|Login / Register| P1
+    P1 -->|Store Credentials| D1
+    P1 -->|JWT Token| Cadet
+
+    Cadet -->|GPS Location Data| P2
+    P2 -->|Query Spawns| D3
+    P2 -->|Nearby Entities < 15m| Cadet
+
+    Cadet -->|Capture Attempt Data| P3
+    P2 -->|Validation Result PIP Check| P3
+    P3 -->|Record Capture| D2
+    P3 -->|Update XP & Energy| D1
+
+    Cadet -->|Armory Purchases / Buddy Select| P4
+    P4 -->|Update Credits & Buddy| D1
+    P4 -->|Read Bestiary| D2
+
+    Cadet -->|Radar Pings & Raid Actions| P5
+    P5 -->|Sync Peer Telemetry| D5
+
+    Admin -->|Spawn Control & Reset| P6
+    P6 -->|Write Spawns| D3
+    P6 -->|Read Aggregates| D1
+    P6 -->|Read Metrics| D2
+    </div>
+    <div class="diagram-caption">Figure 2b: Level 1 Decomposed Data Flow Diagram</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 3: Entity Relationship (ER) Diagram of CampusQuest System</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+erDiagram
+    USER ||--o{ CAPTURE : records
+    USER ||--o{ FRIENDSHIP : initiates
+    USER ||--o{ FRIENDSHIP : receives
+
+    USER {
+        string id PK "UUIDv4"
+        string email UK
+        string username UK
+        string hashed_password
+        string role "STUDENT, ADMIN"
+        string department "CSE, ECE, MECH, etc."
+        int level
+        int xp
+        int energy
+        int max_energy
+        int coins
+        string avatar_title
+        datetime created_at
+    }
+
+    CAPTURE {
+        string id PK "UUIDv4"
+        string user_id FK
+        string creature_name
+        string rarity "COMMON, RARE, EPIC, LEGENDARY"
+        string campus_sector
+        float latitude
+        float longitude
+        int xp_earned
+        datetime captured_at
+    }
+
+    SPAWN {
+        string id PK "UUIDv4"
+        string name
+        float latitude
+        float longitude
+        string rarity
+        datetime created_at
+    }
+
+    LOOT_CRATE {
+        string id PK "UUIDv4"
+        string name
+        string reward_type "ENERGY, COINS, XP"
+        int reward_amount
+        string campus_sector
+        float latitude
+        float longitude
+        boolean is_active
+    }
+
+    FRIENDSHIP {
+        string id PK "UUIDv4"
+        string user_id FK
+        string friend_id FK
+        string status "ACCEPTED, PENDING"
+        datetime created_at
+    }
+    </div>
+    <div class="diagram-caption">Figure 3: Relational Entity Relationship (ER) Schema Model</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 4: Class Diagram of CampusQuest Backend Architecture</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+classDiagram
+    class User {
+        +String id
+        +String email
+        +String username
+        +String role
+        +String department
+        +int level
+        +int xp
+        +int energy
+        +int coins
+        +String avatar_title
+        +to_dict() Dict
+    }
+
+    class Capture {
+        +String id
+        +String user_id
+        +String creature_name
+        +String rarity
+        +String campus_sector
+        +float latitude
+        +float longitude
+        +int xp_earned
+        +DateTime captured_at
+        +to_dict() Dict
+    }
+
+    class Spawn {
+        +String id
+        +String name
+        +float latitude
+        +float longitude
+        +String rarity
+        +DateTime created_at
+        +to_dict() Dict
+    }
+
+    class LootCrate {
+        +String id
+        +String name
+        +String reward_type
+        +int reward_amount
+        +float latitude
+        +float longitude
+        +boolean is_active
+        +to_dict() Dict
+    }
+
+    class GeofenceService {
+        +List~Tuple~ CIT_CAMPUS_POLYGON
+        +is_coordinate_within_cit_bounds(lat, lng) bool
+        +calculate_haversine_distance(lat1, lon1, lat2, lon2) float
+    }
+
+    class GameplayController {
+        +record_capture(user_id, lat, lng, spawn_id) CaptureResult
+        +harvest_loot(user_id, crate_id, lat, lng) LootResult
+        +get_bestiary(user_id) List~Capture~
+    }
+
+    class AuthController {
+        +register_user(schema) User
+        +authenticate_user(email, password) Token
+        +get_current_user(token) User
+    }
+
+    User "1" --> "*" Capture : records
+    GameplayController ..> GeofenceService : verifies spatial bounds
+    GameplayController ..> User : modifies XP and Credits
+    GameplayController ..> Capture : instantiates
+    GameplayController ..> LootCrate : activates
+    AuthController ..> User : manages credentials
+    </div>
+    <div class="diagram-caption">Figure 4: Object-Oriented Domain Class Diagram</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 5: Activity Diagram of Anomaly Encounter & AR Capture Workflow</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart TD
+    Start([Launch CampusQuest]) --> Login{Authenticated?}
+    Login -->|No| Auth[Enter Credentials / Register]
+    Auth --> Login
+    Login -->|Yes| LoadMap[Load 3D Map HUD & CIT Campus Extrusions]
+    LoadMap --> SampleGPS[Acquire Hardware GPS Coordinates]
+    SampleGPS --> CheckBounds{Inside CIT Polygon?}
+
+    CheckBounds -->|No| BoundaryWarn[Display Out-of-Campus Radar Warning]
+    BoundaryWarn --> SampleGPS
+
+    CheckBounds -->|Yes| ScanSpawns[Compute Haversine Distances to Campus Spawns]
+    ScanSpawns --> RangeCheck{Distance <= 15m?}
+
+    RangeCheck -->|No| Explore[Cadet Physically Navigates Campus]
+    Explore --> SampleGPS
+
+    RangeCheck -->|Yes| Alert[Pulse Interaction Radar & Enable AR Button]
+    Alert --> TapCapture[Cadet Taps 'Initiate AR Capture']
+    TapCapture --> OpenCamera[Activate Device Camera Viewfinder]
+    OpenCamera --> AimReticle[Align Targeting Reticle with 3D Anomaly]
+    AimReticle --> ThrowModule[Deploy Quantum Capture Module]
+    ThrowModule --> CalcOdds{Capture Successful?}
+
+    CalcOdds -->|Failed| Flee[Entity Resists - Retry or Flee]
+    Flee --> AimReticle
+
+    CalcOdds -->|Success| AwardXP[Award XP, Data Credits & Sound FX]
+    AwardXP --> SaveBestiary[Persist Capture to Student Bestiary]
+    SaveBestiary --> CheckLevel{XP Threshold Reached?}
+    CheckLevel -->|Yes| LevelUp[Level Up Banner & Stat Boost]
+    CheckLevel -->|No| ReturnHUD[Return to 3D Map HUD]
+    LevelUp --> ReturnHUD
+    ReturnHUD --> End([Continue Exploration])
+    </div>
+    <div class="diagram-caption">Figure 5: Activity Diagram for Geolocation & Anomaly Capture Process</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 6: Sequence Diagram of AR Anomaly Capture Interaction</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Cadet as Student Cadet
+    participant HUD as Map HUD (Mobile UI)
+    participant Viewfinder as AR Viewfinder (Camera)
+    participant API as Gameplay Router (FastAPI)
+    participant Geo as Geofence Engine (Ray-Casting)
+    participant DB as Database (SQLAlchemy)
+
+    Cadet->>HUD: Tap Nearby Anomaly Pin (< 15m)
+    HUD->>Viewfinder: Push /catch Route (Initialize Camera Feed)
+    Viewfinder->>Cadet: Stream Live Optical View with 3D Entity
+    Cadet->>Viewfinder: Deploy Capture Module (Tap Reticle)
+    Viewfinder->>API: POST /catch (Token, Lat, Lng, SpawnID)
+    API->>API: Verify JWT & Deduct 10 Energy
+    API->>Geo: is_coordinate_within_cit_bounds(Lat, Lng)
+    Geo-->>API: Bounds Confirmed (Ray-Casting Valid)
+    API->>Geo: calculate_haversine_distance(CadetGPS, SpawnGPS)
+    Geo-->>API: Distance <= 15m Confirmed
+    API->>DB: INSERT into captures (user_id, creature, sector, xp)
+    API->>DB: UPDATE users (xp = xp + 100, coins = coins + 50)
+    DB-->>API: Transaction Committed (ACID)
+    API-->>Viewfinder: HTTP 200 OK (Capture Confirmed, XP Awarded)
+    Viewfinder->>Cadet: Play Victory Procedural Audio & Display Badges
+    Viewfinder->>HUD: Return to Tactical Map HUD
+    </div>
+    <div class="diagram-caption">Figure 6: Detailed Sequence Execution for AR Encounter and Capture</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 7: State Chart Diagram of Anomaly Entity Lifecycle</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+stateDiagram-v2
+    [*] --> Inactive : Server Initialization
+    Inactive --> Spawned : Admin Spawn Trigger / Scheduled Cycle
+    Spawned --> Undetected : Placed in Campus Polygon
+
+    Undetected --> Detected : Cadet within 50m Radar Horizon
+    Detected --> InRange : Cadet within 15m Interaction Ring
+    InRange --> Detected : Cadet moves beyond 15m
+
+    InRange --> EncounterActive : Cadet Initiates AR Viewfinder
+    EncounterActive --> InRange : Cadet Retreats / Escapes
+
+    state EncounterActive {
+        [*] --> Targeting
+        Targeting --> ModuleThrown : Tap Capture Action
+        ModuleThrown --> CaptureEvaluating
+        CaptureEvaluating --> Resisted : RNG Roll > Catch Rate
+        Resisted --> Targeting : Energy Remains
+    }
+
+    EncounterActive --> Captured : RNG Roll <= Catch Rate
+    Captured --> LoggedInBestiary : Record Written to DB
+    LoggedInBestiary --> Despawned : Remove from Campus Active Spawns
+    Despawned --> [*]
+    </div>
+    <div class="diagram-caption">Figure 7: State Chart Model for In-Game Anomaly Entity States</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 8: Component Diagram of CampusQuest Software Architecture</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart TD
+    subgraph Mobile Client [React Native / Expo Client]
+        C1[Auth & Profile Component]
+        C2[3D Map HUD Component - react-native-maps]
+        C3[AR Viewfinder Component - expo-camera]
+        C4[Procedural Audio Engine - expo-audio]
+        C5[Multiplayer Squad & Radar Component]
+        C6[Armory & Inventory Component]
+    end
+
+    subgraph Backend Application Server [FastAPI / Python 3.12]
+        B1[Auth & RBAC Middleware]
+        B2[Geofence & Spatial Ray-Caster]
+        B3[Gameplay & Anomaly Router]
+        B4[Multiplayer & Peer Router]
+        B5[Armory & Economy Router]
+        B6[Admin Telemetry Router]
+    end
+
+    subgraph Persistence Layer [Database Engine]
+        DB[(SQLite / PostgreSQL via SQLAlchemy)]
+    end
+
+    subgraph External Platforms
+        EXT1[Google / Apple Vector Map Service]
+        EXT2[Device Hardware GNSS & Camera Sensors]
+    end
+
+    C1 -->|REST / JSON| B1
+    C2 -->|REST / Coordinates| B2
+    C3 -->|REST / Captures| B3
+    C5 -->|REST / Radar Pings| B4
+    C6 -->|REST / Purchases| B5
+
+    C2 -.-> EXT1
+    C3 -.-> EXT2
+    C2 -.-> EXT2
+
+    B1 --> DB
+    B2 --> DB
+    B3 --> DB
+    B4 --> DB
+    B5 --> DB
+    B6 --> DB
+    </div>
+    <div class="diagram-caption">Figure 8: Component Breakdown for Mobile Frontend and FastAPI Backend</div>
+  </div>
+
+  <div class="page-break"></div>
+  <h2>Figure 9: Deployment Diagram of CampusQuest System Infrastructure</h2>
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart TD
+    subgraph ClientDevice [Student Smartphone Android / iOS]
+        nodeClient["Mobile App Sandbox\n(React Native 0.86 / Expo SDK 57)\n- Native 3D Map View\n- Camera AR Layer\n- Local Storage (SecureStore)"]
+    end
+
+    subgraph Gateway [Campus Network / Edge Gateway]
+        nodeProxy["Reverse Proxy / SSL Termination\n(Nginx / Uvicorn ASGI)\n- Port 443 HTTPS\n- TLS 1.3 / CORS Validation"]
+    end
+
+    subgraph AppServer [Application Server Node]
+        nodeBackend["FastAPI Backend Container (Python 3.12)\n- 23-Point PIP Ray-Caster\n- Haversine Geodesic Engine\n- RBAC JWT Validator\n- Gameplay Controller"]
+    end
+
+    subgraph DatabaseNode [Database Host Node]
+        nodeDB[("Relational Database\n(SQLite 3 / PostgreSQL 16)\n- ACID Storage\n- users, captures, spawns")]
+    end
+
+    ClientDevice -->|HTTPS / WSS Port 443| Gateway
+    Gateway -->|ASGI TCP Socket Port 8000| AppServer
+    AppServer -->|Unix Socket / SQL Protocol Port 5432| DatabaseNode
+    </div>
+    <div class="diagram-caption">Figure 9: Physical Deployment Nodes and Networking Architecture</div>
+  </div>
+
+  <!-- APPENDIX C -->
+  <div class="page-break"></div>
+  <h1>Appendix C: To Be Determined (TBD) List</h1>
+  <table>
+    <thead>
+      <tr><th style="width:20%;">TBD ID</th><th style="width:50%;">Feature Description</th><th style="width:15%;">Target Phase</th><th style="width:15%;">Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>TBD-001</strong></td><td>Integration with Campus Institutional Single Sign-On (CIT Google OAuth / SAML).</td><td>Phase 2.1</td><td>Scheduled</td></tr>
+      <tr><td><strong>TBD-002</strong></td><td>Bluetooth Low Energy (BLE) direct peer-to-peer battle arena for real-time duels.</td><td>Phase 2.2</td><td>In Discovery</td></tr>
+      <tr><td><strong>TBD-003</strong></td><td>ARKit / ARCore volumetric depth mesh occlusion behind physical campus structures.</td><td>Phase 2.3</td><td>Researching</td></tr>
+      <tr><td><strong>TBD-004</strong></td><td>AI-generated dynamic campus quest lines based on student curriculum milestones.</td><td>Phase 3.0</td><td>Proposed</td></tr>
+      <tr><td><strong>TBD-005</strong></td><td>Campus Guild Territories with seasonal department battle flags and leaderboard trophies.</td><td>Phase 3.1</td><td>Proposed</td></tr>
+      <tr><td><strong>TBD-006</strong></td><td>Haptic-guided spatial navigation audio for visually impaired students on campus grounds.</td><td>Phase 3.2</td><td>In Review</td></tr>
+      <tr><td><strong>TBD-007</strong></td><td>Cross-campus tournament mode between premier engineering colleges in the regional zone.</td><td>Phase 4.0</td><td>Conceptual</td></tr>
+    </tbody>
+  </table>
+
+  <div style="text-align: center; margin-top: 50px; font-style: italic; color: #444;">
+    &mdash; End of Software Requirements Specification for CampusQuest v1.0 &mdash;
+  </div>
+
+</body>
+</html>
+
