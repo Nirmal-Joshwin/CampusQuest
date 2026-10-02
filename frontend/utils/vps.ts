@@ -205,35 +205,32 @@ export function useVPSTracker(options: UseVPSOptions = {}) {
       try {
         // 1. Compass Heading Listener (Universal hardware compass)
         try {
-          const { status } = await Location.getForegroundPermissionsAsync();
-          if (status === 'granted' && isMounted) {
-            headingSub = await Location.watchHeadingAsync((headingData) => {
-              if (!isMounted) return;
-              const val = headingData.trueHeading >= 0 ? headingData.trueHeading : headingData.magHeading;
-              if (val >= 0) {
-                const headingRad = (val * Math.PI) / 180;
-                currentAttitudeRef.current.yaw = headingRad;
+          if (externalHeading === undefined) {
+            const { status } = await Location.getForegroundPermissionsAsync();
+            if (status === 'granted' && isMounted) {
+              headingSub = await Location.watchHeadingAsync((headingData) => {
+                if (!isMounted) return;
+                const val = headingData.trueHeading >= 0 ? headingData.trueHeading : headingData.magHeading;
+                if (val >= 0) {
+                  const headingRad = (val * Math.PI) / 180;
+                  currentAttitudeRef.current.yaw = headingRad;
 
-                // Center entity on screen upon receiving first valid hardware compass bearing
-                if (!hasAlignedInitialHeadingRef.current) {
-                  hasAlignedInitialHeadingRef.current = true;
-                  smoothedAttitudeRef.current.yaw = headingRad;
-                  if (anchorRef.current) {
-                    anchorRef.current.refYaw = headingRad;
+                  if (!hasAlignedInitialHeadingRef.current) {
+                    hasAlignedInitialHeadingRef.current = true;
+                    smoothedAttitudeRef.current.yaw = headingRad;
+                    updateProjection();
+                    return;
                   }
-                  updateProjection();
-                  return;
-                }
 
-                const smooth = smoothedAttitudeRef.current;
-                const dYaw = normalizeAngleRad(headingRad - smooth.yaw);
-                // Highly responsive heading tracking with micro-jitter filtering
-                if (Math.abs(dYaw) > 0.008) {
-                  smooth.yaw = normalizeAngleRad(smooth.yaw + dYaw * 0.55);
-                  updateProjection();
+                  const smooth = smoothedAttitudeRef.current;
+                  const dYaw = normalizeAngleRad(headingRad - smooth.yaw);
+                  if (Math.abs(dYaw) > 0.008) {
+                    smooth.yaw = normalizeAngleRad(smooth.yaw + dYaw * 0.55);
+                    updateProjection();
+                  }
                 }
-              }
-            });
+              });
+            }
           }
         } catch (e) {
           // Location heading unavailable, rely on sensors
@@ -255,9 +252,9 @@ export function useVPSTracker(options: UseVPSOptions = {}) {
 
             // In portrait orientation:
             // -y is gravity when held upright (level with horizon, pitch = 0)
-            // -z > 0 when top of phone tilted forward towards ground (pitch > 0, looking down)
-            // -z < 0 when top of phone tilted back towards ceiling (pitch < 0, looking up)
-            const pitch = Math.atan2(-accelData.z, -accelData.y);
+            // z > 0 when top of phone tilted forward towards ground (pitch > 0, looking down)
+            // z < 0 when top of phone tilted back towards ceiling (pitch < 0, looking up)
+            const pitch = Math.atan2(accelData.z, -accelData.y);
             const roll = Math.atan2(accelData.x, -accelData.y);
 
             currentAttitudeRef.current.pitch = pitch;
@@ -267,9 +264,6 @@ export function useVPSTracker(options: UseVPSOptions = {}) {
             if (!hasAlignedInitialPitchRef.current) {
               hasAlignedInitialPitchRef.current = true;
               smoothedAttitudeRef.current.pitch = pitch;
-              if (anchorRef.current) {
-                anchorRef.current.refPitch = pitch;
-              }
               updateProjection();
               return;
             }

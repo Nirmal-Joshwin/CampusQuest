@@ -280,7 +280,7 @@ export default function ARMainScreen() {
         Accelerometer.setUpdateInterval(32);
         accelSub = Accelerometer.addListener((data) => {
           // In portrait: positive = tilted down towards ground, negative = tilted up towards sky
-          const pitchRad = Math.atan2(-data.z, -data.y);
+          const pitchRad = Math.atan2(data.z, -data.y);
           const pitchDeg = Math.round((pitchRad * 180) / Math.PI);
           setDevicePitch(pitchDeg);
         });
