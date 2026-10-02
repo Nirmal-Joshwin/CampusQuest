@@ -117,9 +117,10 @@ export async function completeTagTeamRaidApi(
   };
 }
 
-export function getRadarWebSocketUrl(userId: string): string {
+export function getRadarWebSocketUrl(userId: string, token?: string | null): string {
   const wsProto = API_BASE_URL.startsWith('https') ? 'wss' : 'ws';
   const cleanHost = API_BASE_URL.replace(/^https?:\/\//, '');
-  return `${wsProto}://${cleanHost}/api/multiplayer/ws/radar/${userId}`;
+  const base = `${wsProto}://${cleanHost}/api/multiplayer/ws/radar/${userId}`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 

@@ -71,18 +71,22 @@ async def websocket_radar_endpoint(websocket: WebSocket, user_id: str, token: Op
     Real-time multiplayer WebSocket to broadcast positions and track nearby students on campus.
     Validates JWT token if supplied to prevent beacon impersonation.
     """
-    if token:
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            sub = payload.get("sub")
-            if sub != user_id:
-                logger.warning(f"WebSocket token mismatch: token sub {sub} != user_id {user_id}")
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
-        except Exception as e:
-            logger.warning(f"WebSocket auth failed for {user_id}: {e}")
+    if not token:
+        logger.warning(f"WebSocket connection rejected: Missing token for {user_id}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        sub = payload.get("sub")
+        if str(sub) != str(user_id):
+            logger.warning(f"WebSocket token mismatch: token sub {sub} != user_id {user_id}")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
+    except Exception as e:
+        logger.warning(f"WebSocket auth failed for {user_id}: {e}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
     await manager.connect(user_id, websocket)
     try:
