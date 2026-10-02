@@ -207,7 +207,7 @@ def remove_friend(
     db: Session = Depends(get_db)
 ):
     """
-    Remove a friend from your friend radar.
+    Remove a friend from your friend radar. Prevents IDOR by verifying ownership.
     """
     friendship = db.query(Friendship).filter(
         ((Friendship.user_id == current_user.id) & (Friendship.friend_id == friend_id)) |
@@ -215,8 +215,15 @@ def remove_friend(
     ).first()
 
     if not friendship:
-        # Also check by friendship id
-        friendship = db.query(Friendship).filter(Friendship.id == friend_id).first()
+        # Also check by friendship record ID, strictly verifying current_user ownership
+        friendship_by_id = db.query(Friendship).filter(Friendship.id == friend_id).first()
+        if friendship_by_id:
+            if friendship_by_id.user_id != current_user.id and friendship_by_id.friend_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access Denied: You cannot modify or delete another player's friendship connection."
+                )
+            friendship = friendship_by_id
 
     if not friendship:
         return {"success": True, "message": "Friend removed from radar."}
@@ -225,6 +232,7 @@ def remove_friend(
     db.commit()
 
     return {"success": True, "message": "Friend removed from radar."}
+
 
 @router.get("/search")
 def search_cadets(

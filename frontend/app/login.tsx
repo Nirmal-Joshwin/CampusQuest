@@ -39,6 +39,7 @@ export default function LoginScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'STUDENT' | 'ADMIN'>('STUDENT');
+  const [adminCode, setAdminCode] = useState('');
   const [department, setDepartment] = useState('CSE');
 
   const handleSubmit = async () => {
@@ -48,22 +49,36 @@ export default function LoginScreen() {
       return;
     }
 
+    if (password.length < 8) {
+      triggerHapticWarning();
+      Alert.alert('Password Too Short', 'Security access code must be at least 8 characters long.');
+      return;
+    }
+
     if (isRegister) {
       if (!username) {
         triggerHapticWarning();
         Alert.alert('Callsign Required', 'Please choose a player username callsign.');
         return;
       }
-      triggerHapticTap();
-      const success = await register(email, username, password, role, department);
-      if (success) {
-        triggerHapticSuccess();
-        playCatchSound();
-        Alert.alert('🎉 Welcome Cadet!', `Account registered successfully as ${role}.`, [
-          { text: 'Start Quest', onPress: () => router.replace('/') },
-        ]);
-      } else {
+      if (role === 'ADMIN' && !adminCode.trim()) {
         triggerHapticWarning();
+        Alert.alert('Clearance Code Required', 'Campus Administrator accounts require a valid clearance code.');
+        return;
+      }
+      triggerHapticTap();
+      try {
+        const success = await register(email, username, password, role, department, role === 'ADMIN' ? adminCode : undefined);
+        if (success) {
+          triggerHapticSuccess();
+          playCatchSound();
+          Alert.alert('🎉 Welcome Cadet!', `Account registered successfully as ${role}.`, [
+            { text: 'Start Quest', onPress: () => router.replace('/') },
+          ]);
+        }
+      } catch (err: any) {
+        triggerHapticWarning();
+        Alert.alert('Registration Denied', err.message || 'Registration could not be completed.');
       }
     } else {
       triggerHapticTap();
@@ -77,6 +92,7 @@ export default function LoginScreen() {
       }
     }
   };
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -191,7 +207,23 @@ export default function LoginScreen() {
                   </View>
                 </View>
 
+                {role === 'ADMIN' && (
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>ADMINISTRATOR CLEARANCE CODE</Text>
+                    <TextInput
+                      style={[liquidGlass.input, styles.input]}
+                      placeholder="Enter Admin Security Key"
+                      placeholderTextColor="#64748B"
+                      value={adminCode}
+                      onChangeText={setAdminCode}
+                      secureTextEntry
+                      autoCapitalize="none"
+                    />
+                  </View>
+                )}
+
                 {/* Department Selector */}
+
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>DEPARTMENT DIVISION</Text>
                   <View style={styles.deptGrid}>

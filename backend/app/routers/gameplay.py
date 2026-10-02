@@ -1,7 +1,8 @@
 import logging
 import uuid
-from typing import List
-from pydantic import BaseModel
+from typing import List, Dict
+from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -29,6 +30,7 @@ XP_MAP = {
 }
 
 EMOJI_MAP = {
+    "HomeSentinel": "🛡️",
     "CIT CyberDragon": "🐉",
     "QuantumSprite": "✨",
     "RoboGolem": "🤖",
@@ -65,12 +67,12 @@ CANONICAL_CAMPUS_LOOT = [
     },
     {
         "id": "cit-loot-3",
-        "name": "Sports Stadium Energy Battery",
+        "name": "Sports Pavilion Energy Battery",
         "reward_type": "ENERGY",
         "reward_amount": 40,
-        "campus_sector": "Main Sports Pavilion",
-        "latitude": 11.029400,
-        "longitude": 77.028400,
+        "campus_sector": "Southern Sports Pavilion",
+        "latitude": 11.026350,
+        "longitude": 77.027150,
         "is_active": True,
     },
 ]
@@ -91,7 +93,8 @@ def record_capture(
         )
 
     # Anti-spoofing verification: ensure capture coordinates are within CIT Campus perimeter
-    if not is_coordinate_within_cit_bounds(payload.latitude, payload.longitude):
+    # HomeSentinel is permitted for field calibration and remote home testing
+    if payload.creature_name != "HomeSentinel" and not is_coordinate_within_cit_bounds(payload.latitude, payload.longitude):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="GPS coordinates rejected: Anomaly capture requires physical presence within the CIT Campus perimeter."
@@ -209,6 +212,13 @@ def get_campus_loot():
     """
     return CANONICAL_CAMPUS_LOOT
 
+# Anti-farming In-Memory Tracking
+USER_LOOT_CLAIMS: Dict[str, Dict[str, datetime]] = {} # user_id -> {crate_id: claim_timestamp}
+USER_QR_LAST_SCAN: Dict[str, datetime] = {}          # user_id -> last_scan_timestamp
+
+LOOT_COOLDOWN_HOURS = 4
+QR_SCAN_COOLDOWN_SECONDS = 300 # 5 minutes
+
 @router.post("/claim-loot", response_model=ClaimLootResponse)
 def claim_loot_cache(
     payload: ClaimLootRequest,
@@ -217,10 +227,24 @@ def claim_loot_cache(
 ):
     """
     Claims a collectible campus loot cache reward (Energy, Coins, or XP).
+    Enforces a 4-hour cooldown per user per crate to prevent infinite farming.
     """
     crate = next((c for c in CANONICAL_CAMPUS_LOOT if c["id"] == payload.crate_id), None)
     if not crate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Loot crate not found")
+
+    now = datetime.now(timezone.utc)
+    user_claims = USER_LOOT_CLAIMS.setdefault(current_user.id, {})
+    if payload.crate_id in user_claims:
+        last_claimed = user_claims[payload.crate_id]
+        elapsed = (now - last_claimed).total_seconds()
+        cooldown_total = LOOT_COOLDOWN_HOURS * 3600
+        if elapsed < cooldown_total:
+            remaining_mins = max(1, int((cooldown_total - elapsed) // 60))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Supply cache already secured! Scanner recharging. Return in {remaining_mins} minutes."
+            )
 
     reward_type = crate["reward_type"]
     reward_amount = crate["reward_amount"]
@@ -236,6 +260,7 @@ def claim_loot_cache(
     try:
         db.commit()
         db.refresh(current_user)
+        user_claims[payload.crate_id] = now
     except Exception as e:
         logger.error(f"Failed to claim loot: {e}")
         db.rollback()
@@ -252,7 +277,9 @@ def claim_loot_cache(
     )
 
 class QrScanRequest(BaseModel):
-    qr_code: str
+    qr_code: str = Field(..., min_length=3, max_length=100)
+
+VALID_QR_PREFIXES = ("CIT-", "CITQUEST-", "CAMPUS-", "STATION-")
 
 @router.post("/qr-scan")
 def scan_campus_qr(
@@ -262,8 +289,30 @@ def scan_campus_qr(
 ):
     """
     Validates physical QR codes on campus bulletin boards and awards secret supply caches.
+    Validates format and enforces rate limiting to prevent spamming.
     """
     code = payload.qr_code.strip()
+    
+    # 1. Signature check
+    code_upper = code.upper()
+    if not any(code_upper.startswith(prefix) for prefix in VALID_QR_PREFIXES):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid QR beacon signature. Scan an authorized CIT CampusQuest station marker."
+        )
+
+    # 2. Rate limiting check (5-minute cooldown)
+    now = datetime.now(timezone.utc)
+    if current_user.id in USER_QR_LAST_SCAN:
+        last_scan = USER_QR_LAST_SCAN[current_user.id]
+        elapsed = (now - last_scan).total_seconds()
+        if elapsed < QR_SCAN_COOLDOWN_SECONDS:
+            remaining_secs = int(QR_SCAN_COOLDOWN_SECONDS - elapsed)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Quantum scanner cooling down! Please wait {remaining_secs} seconds before decrypting another QR station."
+            )
+
     # Award scavenger loot
     bonus_coins = 50
     bonus_energy = 30
@@ -273,7 +322,14 @@ def scan_campus_qr(
     current_user.energy = min(current_user.max_energy, current_user.energy + bonus_energy)
     current_user.xp += bonus_xp
     current_user.level = 1 + (current_user.xp // 1000)
-    db.commit()
+
+    try:
+        db.commit()
+        USER_QR_LAST_SCAN[current_user.id] = now
+    except Exception as e:
+        logger.error(f"Failed to commit QR reward: {e}")
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Reward recording error")
 
     return {
         "success": True,
@@ -285,5 +341,6 @@ def scan_campus_qr(
         "new_energy": current_user.energy,
         "new_xp": current_user.xp
     }
+
 
 

@@ -18,6 +18,32 @@ export interface CreatureChallenge {
 }
 
 export const CREATURE_CHALLENGES: Record<string, CreatureChallenge> = {
+  'Super Fluffy Cat': {
+    creatureName: 'Super Fluffy Cat',
+    landmark: 'Jumping Jazz Amphitheater / CIT Quad',
+    department: 'Digital Arts & Animation',
+    challengeType: 'TRIVIA',
+    title: '🐱 Feline Rhythm Synchronizer',
+    prompt: 'Field Cadet Check: What 3D modeling and animation software suite was used to craft the adorable Super Fluffy Cat model for the game Jumping Jazz Cats?',
+    options: ['Blender 3D', 'Microsoft Paint', 'WordPad'],
+    correctIndex: 0,
+    explanation: 'Harmonic Sync Complete! Super Fluffy Cat was expertly modeled in Blender by Marie-Pier Bouffard!',
+    bonusXp: 250,
+    bonusCatchRate: 0.40,
+  },
+  'HomeSentinel': {
+    creatureName: 'HomeSentinel',
+    landmark: 'Cadet Field Station / Living Room',
+    department: 'Telemetric Operations',
+    challengeType: 'TRIVIA',
+    title: '🛡️ Spatial Telemetry Calibration',
+    prompt: 'Field Cadet Verification: Which wireless frequency band is predominantly utilized for standard IoT telemetry, home Wi-Fi, and low-latency local AR spatial anchors?',
+    options: ['2.4 GHz ISM Band', '24 kHz Acoustic Band', '240 THz Gamma Band'],
+    correctIndex: 0,
+    explanation: 'Frequency Calibrated! 2.4 GHz ISM band established for spatial AR field synchronizations.',
+    bonusXp: 180,
+    bonusCatchRate: 0.35,
+  },
   'CIT CyberDragon': {
     creatureName: 'CIT CyberDragon',
     landmark: 'Admin Block & Tower',

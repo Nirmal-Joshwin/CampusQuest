@@ -3,6 +3,8 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { SpawnPoint, RarityTier } from './haversine';
 
+declare const process: { env: Record<string, string | undefined> };
+
 // Dynamically determine the backend IP:
 const getBackendBaseUrl = (): string => {
   if (process.env.EXPO_PUBLIC_API_URL) {
@@ -10,6 +12,11 @@ const getBackendBaseUrl = (): string => {
   }
   
   if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.location && window.location.origin) {
+      if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        return window.location.origin;
+      }
+    }
     return 'http://localhost:8000';
   }
 
@@ -22,7 +29,7 @@ const getBackendBaseUrl = (): string => {
     }
   }
 
-  return Platform.OS === 'android' ? 'http://10.116.198.55:8000' : 'http://localhost:8000';
+  return Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
 };
 
 export const API_BASE_URL = getBackendBaseUrl();
@@ -40,6 +47,7 @@ export const apiClient = axios.create({
  * 10 Canonical CIT Story Spawns (Fixed physical campus landmark locations)
  */
 export const FALLBACK_CIT_SPAWNS: SpawnPoint[] = [
+  { id: 'cit-story-0', name: 'HomeSentinel', rarity: 'EPIC', latitude: 11.027000, longitude: 77.027000 },
   { id: 'cit-story-1', name: 'CIT CyberDragon', rarity: 'LEGENDARY', latitude: 11.026820, longitude: 77.027450 },
   { id: 'cit-story-2', name: 'QuantumSprite', rarity: 'EPIC', latitude: 11.028050, longitude: 77.026720 },
   { id: 'cit-story-3', name: 'RoboGolem', rarity: 'EPIC', latitude: 11.027450, longitude: 77.026950 },
@@ -109,13 +117,33 @@ export interface BestiaryEntryData {
 
 /**
  * Fetches canonical story spawns from the FastAPI backend.
+ * If userLocation is provided, HomeSentinel is dynamically positioned in range for field/home testing.
  */
-export async function fetchSpawns(count = 10): Promise<SpawnPoint[]> {
+export async function fetchSpawns(
+  count = 11,
+  userLocation?: { latitude: number; longitude: number } | null
+): Promise<SpawnPoint[]> {
   try {
-    const response = await apiClient.get<SpawnPoint[]>(`/api/spawns?count=${count}`);
+    let url = `/api/spawns?count=${count}`;
+    if (userLocation) {
+      url += `&user_lat=${userLocation.latitude}&user_lng=${userLocation.longitude}`;
+    }
+    const response = await apiClient.get<SpawnPoint[]>(url);
     return response.data;
   } catch (error) {
     console.warn(`[CampusQuest] Backend fetch failed at ${API_BASE_URL}/api/spawns, using CIT fallback story data.`, error);
+    if (userLocation) {
+      return FALLBACK_CIT_SPAWNS.map((s) => {
+        if (s.id === 'cit-story-0') {
+          return {
+            ...s,
+            latitude: Number((userLocation.latitude + 0.00006).toFixed(6)),
+            longitude: Number((userLocation.longitude + 0.00005).toFixed(6)),
+          };
+        }
+        return s;
+      });
+    }
     return FALLBACK_CIT_SPAWNS;
   }
 }

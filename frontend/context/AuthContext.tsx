@@ -27,7 +27,8 @@ interface AuthContextType {
     username: string,
     password: string,
     role: 'STUDENT' | 'ADMIN',
-    department: string
+    department: string,
+    adminCode?: string
   ) => Promise<boolean>;
   logout: () => void;
   updateProfile: (data: Partial<UserProfile>) => Promise<boolean>;
@@ -88,7 +89,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     username: string,
     password: string,
     role: 'STUDENT' | 'ADMIN',
-    department: string
+    department: string,
+    adminCode?: string
   ): Promise<boolean> => {
     try {
       setIsLoading(true);
@@ -98,6 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         password,
         role,
         department,
+        admin_code: adminCode ? adminCode.trim() : undefined,
       });
 
       if (res.data?.access_token) {
@@ -108,23 +111,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return false;
     } catch (error: any) {
       console.warn('[Auth] Register error:', error?.response?.data || error.message);
-      setUser({
-        id: `cit-${Date.now()}`,
-        email,
-        username,
-        role,
-        department,
-        level: 1,
-        xp: 0,
-        energy: 100,
-        max_energy: 100,
-        avatar_title: `CIT ${department} Cadet`,
-      });
-      return true;
+      const errorMsg = error?.response?.data?.detail;
+      if (errorMsg) {
+        throw new Error(typeof errorMsg === 'string' ? errorMsg : 'Registration failed');
+      }
+      return false;
     } finally {
       setIsLoading(false);
     }
   };
+
 
   const logout = () => {
     setUser(null);

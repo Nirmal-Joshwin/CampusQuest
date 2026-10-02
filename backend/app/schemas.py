@@ -21,15 +21,23 @@ class RewardType(str, Enum):
 
 # --- User & Auth Schemas ---
 class UserRegister(BaseModel):
-    email: str = Field(..., description="Student or Admin email")
+    email: str = Field(
+        ...,
+        min_length=5,
+        max_length=120,
+        pattern=r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
+        description="Student or Admin email"
+    )
     username: str = Field(..., min_length=3, max_length=30, pattern=r"^[a-zA-Z0-9_.-]+$", description="Unique player callsign")
-    password: str = Field(..., min_length=6, description="Password (min 6 characters)")
+    password: str = Field(..., min_length=8, max_length=128, description="Password (8 to 128 characters)")
     role: UserRole = Field(default=UserRole.STUDENT, description="Account role")
-    department: str = Field(default="CSE", description="College Department (e.g. CSE, ECE, MECH, CIVIL, IT, AI&DS)")
+    admin_code: Optional[str] = Field(None, max_length=100, description="Clearance code required if requesting ADMIN role")
+    department: str = Field(default="CSE", max_length=20, description="College Department (e.g. CSE, ECE, MECH, CIVIL, IT, AI&DS)")
 
 class UserLogin(BaseModel):
-    email: str = Field(..., description="Registered email")
-    password: str = Field(..., description="Password")
+    email: str = Field(..., min_length=5, max_length=120, description="Registered email")
+    password: str = Field(..., min_length=1, max_length=128, description="Password")
+
 
 class UserResponse(BaseModel):
     id: str
@@ -106,7 +114,8 @@ class LootCrateResponse(BaseModel):
         from_attributes = True
 
 class ClaimLootRequest(BaseModel):
-    crate_id: str
+    crate_id: str = Field(..., min_length=1, max_length=50)
+
 
 class ClaimLootResponse(BaseModel):
     success: bool

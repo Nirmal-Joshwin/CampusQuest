@@ -62,11 +62,28 @@ class CreateRaidRequest(BaseModel):
 class JoinRaidRequest(BaseModel):
     raid_id: str
 
+from app.auth import SECRET_KEY, ALGORITHM
+import jwt
+
 @router.websocket("/ws/radar/{user_id}")
-async def websocket_radar_endpoint(websocket: WebSocket, user_id: str):
+async def websocket_radar_endpoint(websocket: WebSocket, user_id: str, token: Optional[str] = None):
     """
     Real-time multiplayer WebSocket to broadcast positions and track nearby students on campus.
+    Validates JWT token if supplied to prevent beacon impersonation.
     """
+    if token:
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            sub = payload.get("sub")
+            if sub != user_id:
+                logger.warning(f"WebSocket token mismatch: token sub {sub} != user_id {user_id}")
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+        except Exception as e:
+            logger.warning(f"WebSocket auth failed for {user_id}: {e}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
     await manager.connect(user_id, websocket)
     try:
         while True:
@@ -80,6 +97,7 @@ async def websocket_radar_endpoint(websocket: WebSocket, user_id: str):
     except Exception as e:
         logger.warning(f"WebSocket error for user {user_id}: {e}")
         manager.disconnect(user_id)
+
 
 @router.get("/peers")
 def get_active_peers():
@@ -176,6 +194,7 @@ def complete_tag_team_raid(
 ):
     """
     Complete the tag-team raid, awarding shared bonus XP and bestiary registration to all teammates.
+    Prevents exploitation by enforcing single completion and membership verification.
     """
     raid = ACTIVE_RAID_GROUPS.get(raid_id)
     if not raid:
@@ -184,9 +203,26 @@ def complete_tag_team_raid(
             detail=f"Raid group '{raid_id}' not found."
         )
 
+    # 1. Enforce single completion (prevent infinite XP farming)
+    if raid.get("status") == "COMPLETED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Raid rewards have already been claimed! Anomaly strike is completed."
+        )
+
+    # 2. Enforce team membership verification
+    is_teammate = raid.get("host_user_id") == current_user.id or any(
+        m.get("user_id") == current_user.id for m in raid.get("teammates", [])
+    )
+    if not is_teammate:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access Denied: You must be a deployed member of this strike team to complete the raid."
+        )
+
     raid["status"] = "COMPLETED"
 
-    # Award +2000 Bonus XP & commit capture for host/caller
+    # Award +2000 Bonus XP & Data Credits
     current_user.xp += 2000
     current_user.coins += 100
     db.commit()
@@ -196,4 +232,5 @@ def complete_tag_team_raid(
         "message": f"🎉 TAG-TEAM VICTORY! {raid['boss_name']} secured with your strike team!\n+2000 XP & +100 Data Credits awarded to all members!",
         "raid": raid
     }
+
 

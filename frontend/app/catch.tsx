@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,10 +8,13 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
+  Dimensions,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useVPSTracker } from '../utils/vps';
 import {
   getRarityConfig,
   getCreatureEmoji,
@@ -30,6 +33,7 @@ import {
 import { liquidGlass, GLASS_COLORS } from '../styles/liquidGlass';
 import { triggerHapticTap, triggerHapticSuccess, triggerHapticWarning, triggerHapticImpact } from '../utils/haptics';
 import { playTapSound, playSwooshSound, playCatchSound, playBattleSound } from '../utils/sound';
+import ARCreatureModel from '../components/ARCreatureModel';
 
 export default function CatchScreen() {
   const router = useRouter();
@@ -48,12 +52,32 @@ export default function CatchScreen() {
   const challenge = getCreatureChallenge(creatureName);
 
   const [permission, requestPermission] = useCameraPermissions();
+  const [isFocused, setIsFocused] = useState<boolean>(true);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => {
+        setIsFocused(false);
+      };
+    }, [])
+  );
   const [caught, setCaught] = useState(false);
   const [capturing, setCapturing] = useState(false);
+
+  // Victory Celebration Modal state
+  const [showVictoryModal, setShowVictoryModal] = useState<boolean>(false);
+  const [victoryStats, setVictoryStats] = useState<{
+    xpGained: number;
+    coinsGained: number;
+    levelUp: boolean;
+    newLevel: number;
+    message: string;
+  } | null>(null);
 
   // QR Code Scavenger Mode state
   const [isScanningQr, setIsScanningQr] = useState(false);
   const [scannedRecently, setScannedRecently] = useState(false);
+
 
   // Tag-Team Raid Strike Group state
   const [showRaidModal, setShowRaidModal] = useState<boolean>(false);
@@ -63,8 +87,40 @@ export default function CatchScreen() {
 
   // Challenge state: if there is a challenge, challengePassed starts as false
   const [challengePassed, setChallengePassed] = useState<boolean>(!challenge);
+  const [showChallengeModal, setShowChallengeModal] = useState<boolean>(false);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [challengeResult, setChallengeResult] = useState<'CORRECT' | 'WRONG' | null>(null);
+
+  // Visual Positioning System (VPS) Engine
+  const {
+    anchor,
+    projection: vps,
+    mode: trackingMode,
+    setMode: setTrackingMode,
+    lockAnchorInFront,
+    spawnRandomAnchorInRadar,
+    reanchorAtScreenTap,
+  } = useVPSTracker({ defaultDepthMeters: 2.5 });
+
+  const [vpsTapBanner, setVpsTapBanner] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Lock 3D Super Fluffy Cat directly in front of the camera lens so it's immediately visible
+    lockAnchorInFront(creatureName, rarity, 2.5);
+  }, [creatureName, rarity, lockAnchorInFront]);
+
+  const handleScreenTapToPlace = (event: any) => {
+    if (challenge && !challengePassed) return;
+    const { locationX, locationY } = event.nativeEvent;
+    const screenWidth = Dimensions.get('window').width;
+    const screenHeight = Dimensions.get('window').height;
+    const tapX = (locationX / screenWidth) * 100;
+    const tapY = (locationY / screenHeight) * 100;
+    triggerHapticTap();
+    reanchorAtScreenTap(tapX, tapY);
+    setVpsTapBanner('📍 VPS ANCHOR GROUNDED');
+    setTimeout(() => setVpsTapBanner(null), 2000);
+  };
 
   // Handle Challenge Option Selection
   const handleSelectOption = (index: number) => {
@@ -77,6 +133,7 @@ export default function CatchScreen() {
       playCatchSound();
       setTimeout(() => {
         setChallengePassed(true);
+        setShowChallengeModal(false);
       }, 1400);
     } else {
       setChallengeResult('WRONG');
@@ -134,21 +191,25 @@ export default function CatchScreen() {
         updateProfile({});
       }
 
-      Alert.alert(
-        '🎉 TAG-TEAM BOSS VICTORY!',
-        `${raidRes.message || 'Legendary Anomaly neutralized with your CIT Strike Team!'}\n\n+2000 Bonus Team XP\n+100 Data Credits (Armory Currency)\nBestiary updated with Boss Crest!`,
-        [
-          { text: 'View Bestiary', onPress: () => router.replace('/inventory') },
-          { text: 'Back to Radar', onPress: () => router.back() },
-        ],
-        { cancelable: false }
-      );
+      setVictoryStats({
+        xpGained: 2000,
+        coinsGained: 100,
+        levelUp: false,
+        newLevel: user ? user.level : 1,
+        message: raidRes.message || 'Legendary Anomaly neutralized with your CIT Strike Team!',
+      });
+      setShowVictoryModal(true);
     } catch (e) {
       setCaught(true);
       setShowRaidModal(false);
-      Alert.alert('🎉 Strike Team Victory!', `Boss ${creatureName} secured!`, [
-        { text: 'Great!', onPress: () => router.back() },
-      ]);
+      setVictoryStats({
+        xpGained: 2000,
+        coinsGained: 100,
+        levelUp: false,
+        newLevel: user ? user.level : 1,
+        message: `Boss ${creatureName} secured with your CIT Strike Team!`,
+      });
+      setShowVictoryModal(true);
     } finally {
       setCapturing(false);
     }
@@ -219,37 +280,33 @@ export default function CatchScreen() {
         updateProfile({});
       }
 
-      const totalXp = rarityConfig.xpReward + (challenge ? challenge.bonusXp : 0);
+      const totalXp = (result?.xp_gained || rarityConfig.xpReward) + (challenge ? challenge.bonusXp : 0);
 
-      Alert.alert(
-        `🎉 ${rarityConfig.icon} Captured!`,
-        `${result.message || `You successfully captured ${creatureName} (${rarityConfig.label})!`}\n\n+${totalXp} XP earned ${challenge ? `(+${challenge.bonusXp} Challenge Bonus!)` : ''}\nEnergy: -10 HP\nAdded to your CIT Bestiary!`,
-        [
-          {
-            text: 'View Bestiary',
-            onPress: () => {
-              router.replace('/inventory');
-            },
-          },
-          {
-            text: 'Back to Radar',
-            onPress: () => {
-              router.back();
-            },
-          },
-        ],
-        { cancelable: false }
-      );
+      setVictoryStats({
+        xpGained: totalXp,
+        coinsGained: 25,
+        levelUp: !!result?.level_up,
+        newLevel: result?.new_level || (user ? user.level : 1),
+        message: result?.message || `Successfully captured ${creatureName}!`,
+      });
+      setCaught(true);
+      setShowVictoryModal(true);
     } catch (e: any) {
       console.warn('Capture error:', e);
+      setVictoryStats({
+        xpGained: rarityConfig.xpReward,
+        coinsGained: 25,
+        levelUp: false,
+        newLevel: user ? user.level : 1,
+        message: `Captured ${creatureName}! Added to Bestiary.`,
+      });
       setCaught(true);
-      Alert.alert('🎉 Captured!', `Secured ${creatureName}!`, [
-        { text: 'Great!', onPress: () => router.back() },
-      ]);
+      setShowVictoryModal(true);
     } finally {
       setCapturing(false);
     }
   };
+
 
   // If permissions are still loading
   if (!permission) {
@@ -285,42 +342,65 @@ export default function CatchScreen() {
   return (
     <View style={styles.container}>
       {/* Full-screen Camera View with AR and Physical Campus QR Scanner */}
-      <CameraView
-        style={styles.camera}
-        facing="back"
-        barcodeScannerSettings={isScanningQr ? { barcodeTypes: ['qr'] } : undefined}
-        onBarcodeScanned={isScanningQr ? handleBarcodeScanned : undefined}
-      >
-        {/* Top Header HUD */}
-        <SafeAreaView style={styles.topHud}>
-          <View style={styles.hudBar}>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-              <Text style={styles.backButtonText}>✕ Flee</Text>
-            </TouchableOpacity>
+      {isFocused && permission?.granted ? (
+        <CameraView
+          style={styles.camera}
+          facing="back"
+          barcodeScannerSettings={isScanningQr ? { barcodeTypes: ['qr'] } : undefined}
+          onBarcodeScanned={isScanningQr ? handleBarcodeScanned : undefined}
+        />
+      ) : (
+        <View style={[styles.camera, { backgroundColor: '#0B1329', alignItems: 'center', justifyContent: 'center' }]}>
+          <Text style={{ color: 'rgba(56, 189, 248, 0.6)', fontWeight: 'bold' }}>⚡ OPTICAL AR SENSOR</Text>
+        </View>
+      )}
 
-            {/* QR Scavenger Toggle Button */}
-            <TouchableOpacity
-              style={[styles.qrToggleButton, isScanningQr && styles.qrToggleButtonActive]}
-              onPress={() => setIsScanningQr(!isScanningQr)}
-            >
-              <Text style={styles.qrToggleText}>
-                {isScanningQr ? '👾 AR Catch' : '📷 QR Station'}
-              </Text>
-            </TouchableOpacity>
+      {/* Surface Tap-to-Place Gesture Layer */}
+      {!isScanningQr && (!challenge || challengePassed) && (
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={handleScreenTapToPlace}
+        />
+      )}
 
-            {/* Rarity & Encounter Badge */}
-            <View
-              style={[
-                styles.targetBadge,
-                { backgroundColor: rarityConfig.bgColor, borderColor: rarityConfig.borderColor },
-              ]}
-            >
-              <Text style={[styles.targetBadgeText, { color: rarityConfig.color }]}>
-                {rarityConfig.icon} {rarityConfig.label.toUpperCase()}
-              </Text>
-            </View>
+      {/* Top Header HUD */}
+      <SafeAreaView style={styles.topHud}>
+        <View style={styles.hudBar}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>✕ Flee</Text>
+          </TouchableOpacity>
+
+          {/* QR Scavenger Toggle Button */}
+          <TouchableOpacity
+            style={[styles.qrToggleButton, isScanningQr && styles.qrToggleButtonActive]}
+            onPress={() => setIsScanningQr(!isScanningQr)}
+          >
+            <Text style={styles.qrToggleText}>
+              {isScanningQr ? '👾 AR Catch' : '📷 QR Station'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Rarity & Encounter Badge */}
+          <View
+            style={[
+              styles.targetBadge,
+              { backgroundColor: rarityConfig.bgColor, borderColor: rarityConfig.borderColor },
+            ]}
+          >
+            <Text style={[styles.targetBadgeText, { color: rarityConfig.color }]}>
+              {rarityConfig.icon} {rarityConfig.label.toUpperCase()}
+            </Text>
           </View>
-        </SafeAreaView>
+        </View>
+
+        {/* Temporary Tap Confirmation Toast */}
+        {vpsTapBanner && (
+          <View style={styles.vpsToastBanner} pointerEvents="none">
+            <Text style={styles.vpsToastText}>{vpsTapBanner}</Text>
+          </View>
+        )}
+      </SafeAreaView>
 
         {/* QR Scanner Mode Overlay */}
         {isScanningQr ? (
@@ -339,125 +419,181 @@ export default function CatchScreen() {
               </Text>
             </View>
           </View>
-        ) : challenge && !challengePassed ? (
-          <View style={styles.challengeOverlayWrapper}>
-            <ScrollView contentContainerStyle={styles.challengeCard}>
-              <View style={styles.challengeHeader}>
-                <Text style={styles.challengeEmoji}>{creatureEmoji}</Text>
-                <View style={styles.challengeHeaderTexts}>
-                  <Text style={styles.challengeSubtitle}>
-                    {challenge.landmark} • {challenge.department}
-                  </Text>
-                  <Text style={[styles.challengeTitle, { color: rarityConfig.color }]}>
-                    {challenge.title}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.divider} />
-
-              <Text style={styles.challengePromptText}>{challenge.prompt}</Text>
-
-              {/* Multiple Choice Options */}
-              <View style={styles.optionsContainer}>
-                {challenge.options.map((option, idx) => {
-                  const isSelected = selectedOption === idx;
-                  const isCorrect = isSelected && challengeResult === 'CORRECT';
-                  const isWrong = isSelected && challengeResult === 'WRONG';
-
-                  return (
-                    <TouchableOpacity
-                      key={idx}
-                      style={[
-                        styles.optionButton,
-                        isSelected && styles.optionSelected,
-                        isCorrect && styles.optionCorrect,
-                        isWrong && styles.optionWrong,
-                      ]}
-                      onPress={() => handleSelectOption(idx)}
-                      disabled={challengeResult === 'CORRECT'}
-                    >
-                      <View style={styles.optionLetterBadge}>
-                        <Text style={styles.optionLetter}>
-                          {String.fromCharCode(65 + idx)}
+        ) : (
+          /* Normal AR Reticle Target: 3D Holographic Model & "Tap to Catch" */
+          <>
+            {/* Optional Campus Trivia Challenge Modal for Bonus XP */}
+            {challenge && (
+              <Modal
+                visible={showChallengeModal}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setShowChallengeModal(false)}
+              >
+                <View style={styles.challengeOverlayWrapper}>
+                  <ScrollView
+                    style={styles.challengeScroll}
+                    contentContainerStyle={styles.challengeCard}
+                    showsVerticalScrollIndicator={false}
+                    bounces={false}
+                  >
+                    <View style={styles.challengeHeader}>
+                      <Text style={styles.challengeEmoji}>{creatureEmoji}</Text>
+                      <View style={styles.challengeHeaderTexts}>
+                        <Text style={styles.challengeSubtitle} numberOfLines={1}>
+                          {challenge.landmark} • {challenge.department}
+                        </Text>
+                        <Text style={[styles.challengeTitle, { color: rarityConfig.color }]} numberOfLines={2}>
+                          {challenge.title}
                         </Text>
                       </View>
-                      <Text
-                        style={[
-                          styles.optionText,
-                          isCorrect && { color: '#86EFAC', fontWeight: 'bold' },
-                          isWrong && { color: '#FCA5A5' },
-                        ]}
-                      >
-                        {option}
-                      </Text>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <Text style={styles.challengePromptText}>{challenge.prompt}</Text>
+
+                    {/* Multiple Choice Options */}
+                    <View style={styles.optionsContainer}>
+                      {challenge.options.map((option, idx) => {
+                        const isSelected = selectedOption === idx;
+                        const isCorrect = isSelected && challengeResult === 'CORRECT';
+                        const isWrong = isSelected && challengeResult === 'WRONG';
+
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            style={[
+                              styles.optionButton,
+                              isSelected && styles.optionSelected,
+                              isCorrect && styles.optionCorrect,
+                              isWrong && styles.optionWrong,
+                            ]}
+                            onPress={() => handleSelectOption(idx)}
+                            disabled={challengeResult === 'CORRECT'}
+                          >
+                            <View style={styles.optionLetterBadge}>
+                              <Text style={styles.optionLetter}>
+                                {String.fromCharCode(65 + idx)}
+                              </Text>
+                            </View>
+                            <Text
+                              style={[
+                                styles.optionText,
+                                isCorrect && { color: '#86EFAC', fontWeight: 'bold' },
+                                isWrong && { color: '#FCA5A5' },
+                              ]}
+                            >
+                              {option}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Status Banner */}
+                    {challengeResult === 'CORRECT' ? (
+                      <View style={styles.successBanner}>
+                        <Text style={styles.successBannerTitle}>⚡ SHIELD DECRYPTED! ⚡</Text>
+                        <Text style={styles.successBannerDesc}>
+                          {challenge.explanation} (+{challenge.bonusXp} XP Bonus Unlocked)
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.hintBanner}>
+                        <Text style={styles.hintBannerText}>
+                          Solve the trivia challenge to earn +{challenge.bonusXp} Bonus XP upon capture!
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Close button to return to 3D AR viewfinder */}
+                    <TouchableOpacity
+                      style={styles.bypassButton}
+                      onPress={() => setShowChallengeModal(false)}
+                    >
+                      <Text style={styles.bypassButtonText}>✕ Return to 3D View</Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Status Banner */}
-              {challengeResult === 'CORRECT' ? (
-                <View style={styles.successBanner}>
-                  <Text style={styles.successBannerTitle}>⚡ SHIELD DECRYPTED! ⚡</Text>
-                  <Text style={styles.successBannerDesc}>
-                    {challenge.explanation} (+{challenge.bonusXp} XP Bonus Unlocked)
-                  </Text>
+                  </ScrollView>
                 </View>
-              ) : (
-                <View style={styles.hintBanner}>
-                  <Text style={styles.hintBannerText}>
-                    Solve the challenge to deactivate the quantum barrier and unlock capture!
-                  </Text>
-                </View>
-              )}
+              </Modal>
+            )}
 
-              {/* Bypass button if student wants to try direct capture */}
+            {/* Non-intrusive Floating Challenge Pill in AR view */}
+            {challenge && !challengePassed && (
               <TouchableOpacity
-                style={styles.bypassButton}
-                onPress={() => setChallengePassed(true)}
+                style={styles.floatingChallengePill}
+                activeOpacity={0.85}
+                onPress={() => setShowChallengeModal(true)}
               >
-                <Text style={styles.bypassButtonText}>Override Shield & Force Catch →</Text>
+                <Text style={styles.floatingChallengePillText}>
+                  🧠 Campus Trivia: {challenge.title} (+{challenge.bonusXp} XP Bonus) ➔
+                </Text>
               </TouchableOpacity>
-            </ScrollView>
-          </View>
-        ) : (
-          /* Normal AR Reticle Target: Creature Box & "Tap to Catch" */
-          <>
-            <View style={styles.centerTargetWrapper} pointerEvents="box-none">
+            )}
+
+
+            {/* Off-Screen Directional Indicator when looking away from anchor */}
+            {trackingMode === 'VPS' && !vps.inView && (
+              <View
+                style={[
+                  styles.offScreenGuideContainer,
+                  vps.offScreenDirection === 'left' && styles.offScreenGuideLeft,
+                  vps.offScreenDirection === 'right' && styles.offScreenGuideRight,
+                  vps.offScreenDirection === 'up' && styles.offScreenGuideUp,
+                  vps.offScreenDirection === 'down' && styles.offScreenGuideDown,
+                ]}
+                pointerEvents="none"
+              >
+                <Text style={styles.offScreenGuideEmoji}>
+                  {vps.offScreenDirection === 'left'
+                    ? '⬅️'
+                    : vps.offScreenDirection === 'right'
+                    ? '➡️'
+                    : vps.offScreenDirection === 'up'
+                    ? '⬆️'
+                    : '⬇️'}
+                </Text>
+                <Text style={styles.offScreenGuideLabel}>
+                  TURN {vps.offScreenDirection.toUpperCase()} ({vps.angularDistanceDeg}°)
+                </Text>
+                <Text style={styles.offScreenGuideSubLabel}>OPTICAL TARGET LOCKED</Text>
+              </View>
+            )}
+
+            <View
+              style={[
+                styles.centerTargetWrapper,
+                trackingMode === 'VPS' && {
+                  position: 'absolute',
+                  width: 300,
+                  height: 390,
+                  left: `${vps.screenXPercent}%`,
+                  top: `${vps.screenYPercent}%`,
+                  transform: [
+                    { translateX: -150 },
+                    { translateY: -185 },
+                    { scale: Math.max(0.85, Math.min(1.25, vps.scale)) },
+                  ],
+                  opacity: 1,
+                },
+              ]}
+              pointerEvents="box-none"
+            >
               <TouchableOpacity
                 style={[styles.creatureCard, caught && styles.creatureCardCaught]}
-                activeOpacity={0.7}
+                activeOpacity={0.85}
                 onPress={handleCatchCreature}
                 disabled={capturing}
               >
-                {/* AR Outer Reticle Circle */}
-                <View
-                  style={[
-                    styles.reticleRing,
-                    { borderColor: rarityConfig.color },
-                  ]}
-                >
-                  <View style={[styles.innerReticleRing, { borderColor: rarityConfig.borderColor }]} />
-                </View>
-
-                {/* Avatar Circle with Dynamic Rarity Glow */}
-                <View
-                  style={[
-                    styles.avatarBox,
-                    {
-                      backgroundColor: rarityConfig.bgColor,
-                      borderColor: rarityConfig.color,
-                      shadowColor: rarityConfig.color,
-                    },
-                  ]}
-                >
-                  {capturing ? (
-                    <ActivityIndicator size="large" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.avatarEmoji}>{creatureEmoji}</Text>
-                  )}
-                </View>
+                {/* 3D Holographic Animated AR Model */}
+                <ARCreatureModel
+                  creatureName={creatureName}
+                  rarity={rarity}
+                  creatureEmoji={creatureEmoji}
+                  isCapturing={capturing}
+                  onPress={handleCatchCreature}
+                />
 
                 {/* Target Label */}
                 <Text style={styles.creatureNameText}>{creatureName}</Text>
@@ -474,17 +610,14 @@ export default function CatchScreen() {
                   </Text>
                 </View>
 
-                {/* Tap to Catch Action Badge */}
-                <View
-                  style={[
-                    styles.tapToCatchBadge,
-                    { backgroundColor: rarityConfig.color, borderColor: '#FFFFFF' },
-                  ]}
-                >
-                  <Text style={styles.tapToCatchText}>
-                    {capturing ? '⚡ CAPTURING...' : '✨ TAP TO CAPTURE ✨'}
-                  </Text>
-                </View>
+                {capturing && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                    <ActivityIndicator size="small" color="#38BDF8" />
+                    <Text style={{ color: '#38BDF8', fontWeight: 'bold', fontSize: 13, marginLeft: 6 }}>
+                      ⚡ CAPTURING ANOMALY...
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
 
@@ -512,25 +645,20 @@ export default function CatchScreen() {
                 </TouchableOpacity>
               )}
 
-              <TouchableOpacity
-                style={[
-                  styles.throwCatchButton,
-                  {
-                    backgroundColor: rarityConfig.bgColor,
-                    borderColor: rarityConfig.color,
-                    shadowColor: rarityConfig.color,
-                  },
-                ]}
-                activeOpacity={0.8}
-                onPress={handleCatchCreature}
-                disabled={capturing}
-              >
-                <Text style={styles.throwButtonIcon}>⚡</Text>
-                <Text style={[styles.throwButtonText, { color: rarityConfig.color }]}>
-                  {capturing ? 'DEPLOYING NANO-TRAP...' : `SOLO CAPTURE ${creatureName.toUpperCase()}`}
-                </Text>
-              </TouchableOpacity>
-              <Text style={styles.arHintText}>Tap the creature, throw solo trap, or rally a campus strike team!</Text>
+              {capturing ? (
+                <View style={styles.captureStatusBanner}>
+                  <ActivityIndicator size="small" color={rarityConfig.color} />
+                  <Text style={[styles.captureStatusText, { color: rarityConfig.color }]}>
+                    ⚡ DEPLOYING QUANTUM NANO-TRAP...
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.arHintPill}>
+                  <Text style={styles.arHintText}>
+                    👆 Touch the 3D anomaly onscreen to capture!
+                  </Text>
+                </View>
+              )}
             </SafeAreaView>
 
             {/* Tag-Team Strike Group War Room Modal */}
@@ -632,7 +760,95 @@ export default function CatchScreen() {
             )}
           </>
         )}
-      </CameraView>
+
+      {/* Victory Celebration Modal */}
+      {showVictoryModal && victoryStats && (
+        <Modal
+          visible={showVictoryModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {
+            setShowVictoryModal(false);
+            router.back();
+          }}
+        >
+          <View style={styles.victoryModalOverlay}>
+            <View style={styles.victoryCard}>
+              <View
+                style={[
+                  styles.victoryGlowBadge,
+                  { borderColor: rarityConfig.color, shadowColor: rarityConfig.color },
+                ]}
+              >
+                <Text style={styles.victoryEmoji}>{creatureEmoji}</Text>
+              </View>
+
+              <Text style={styles.victoryHeaderTitle}>🎉 ANOMALY SECURED!</Text>
+              <Text style={styles.victoryCreatureName}>{creatureName}</Text>
+              <View
+                style={[
+                  styles.victoryRarityBadge,
+                  { backgroundColor: rarityConfig.bgColor, borderColor: rarityConfig.borderColor },
+                ]}
+              >
+                <Text style={[styles.victoryRarityText, { color: rarityConfig.color }]}>
+                  {rarityConfig.icon} {rarityConfig.label.toUpperCase()} CLASSIFICATION
+                </Text>
+              </View>
+
+              {/* Reward Row */}
+              <View style={styles.rewardRow}>
+                <View style={styles.rewardBox}>
+                  <Text style={styles.rewardValue}>+{victoryStats.xpGained}</Text>
+                  <Text style={styles.rewardLabel}>EXPERIENCE</Text>
+                </View>
+                <View style={styles.rewardBox}>
+                  <Text style={[styles.rewardValue, { color: '#38BDF8' }]}>
+                    +{victoryStats.coinsGained} 💎
+                  </Text>
+                  <Text style={styles.rewardLabel}>DATA CREDITS</Text>
+                </View>
+              </View>
+
+              {/* Level Up Banner */}
+              {victoryStats.levelUp && (
+                <View style={styles.levelUpBanner}>
+                  <Text style={styles.levelUpText}>
+                    🆙 PROMOTION! YOU ARE NOW LEVEL {victoryStats.newLevel}!
+                  </Text>
+                </View>
+              )}
+
+              <Text style={styles.victoryFlavorText}>{victoryStats.message}</Text>
+
+              {/* Action Buttons */}
+              <View style={styles.victoryActionRow}>
+                <TouchableOpacity
+                  style={[styles.victoryPrimaryBtn, { backgroundColor: rarityConfig.color }]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setShowVictoryModal(false);
+                    router.replace('/inventory');
+                  }}
+                >
+                  <Text style={styles.victoryPrimaryBtnText}>📖 VIEW IN BESTIARY</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.victorySecondaryBtn}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setShowVictoryModal(false);
+                    router.back();
+                  }}
+                >
+                  <Text style={styles.victorySecondaryBtnText}>🗺️ RETURN TO RADAR</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -643,7 +859,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   camera: {
-    flex: 1,
+    ...StyleSheet.absoluteFill,
   },
   topHud: {
     position: 'absolute',
@@ -685,19 +901,29 @@ const styles = StyleSheet.create({
   },
   // Challenge Modal Styles
   challengeOverlayWrapper: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(7, 13, 30, 0.90)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: 'rgba(7, 13, 30, 0.85)',
-    zIndex: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 36,
+    zIndex: 50,
+  },
+  challengeScroll: {
+    width: '100%',
+    maxHeight: '94%',
   },
   challengeCard: {
     backgroundColor: '#0F172A',
-    borderRadius: 20,
+    borderRadius: 22,
     borderWidth: 1.5,
     borderColor: '#38BDF8',
-    padding: 20,
+    padding: 18,
+    paddingBottom: 28,
     width: '100%',
     maxWidth: 420,
     alignSelf: 'center',
@@ -832,7 +1058,7 @@ const styles = StyleSheet.create({
   creatureCard: {
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
+    padding: 6,
   },
   creatureCardCaught: {
     opacity: 0.4,
@@ -902,6 +1128,194 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.5,
   },
+  tapToGroundHint: {
+    color: 'rgba(56, 189, 248, 0.75)',
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: 8,
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  floatingChallengePill: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? 68 : 88,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+    zIndex: 25,
+  },
+  floatingChallengePillText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: 'bold',
+    letterSpacing: 0.3,
+  },
+  /* VPS Mode Toggle & Telemetry Styles */
+  vpsModeTogglePill: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vpsPillActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#38BDF8',
+  },
+  gpsPillActive: {
+    backgroundColor: '#1E293B',
+    borderColor: '#64748B',
+  },
+  vpsModeToggleText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  vpsTelemetryStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginHorizontal: 16,
+    marginTop: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.35)',
+  },
+  vpsTelemetryLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  vpsLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#22C55E',
+  },
+  vpsTelemetryText: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: 'bold',
+    letterSpacing: 0.3,
+  },
+  vpsRecalibrateMiniBtn: {
+    backgroundColor: '#0284C7',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
+  vpsRecalibrateMiniText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  vpsToastBanner: {
+    alignSelf: 'center',
+    backgroundColor: '#0284C7',
+    paddingVertical: 4,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    elevation: 8,
+  },
+  vpsToastText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  /* VPS Holographic SLAM Scanning Grid */
+  vpsScannerLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  vpsFeaturePoint: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vpsCrosshair: {
+    color: 'rgba(34, 197, 94, 0.55)',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  vpsFloorGridLine1: {
+    position: 'absolute',
+    bottom: '22%',
+    left: '10%',
+    right: '10%',
+    height: 1,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+  },
+  vpsFloorGridLine2: {
+    position: 'absolute',
+    bottom: '12%',
+    left: '5%',
+    right: '5%',
+    height: 1,
+    backgroundColor: 'rgba(56, 189, 248, 0.22)',
+  },
+  /* Off-Screen Target Direction Guide */
+  offScreenGuideContainer: {
+    position: 'absolute',
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#0284C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 40,
+    elevation: 8,
+  },
+  offScreenGuideLeft: {
+    left: 12,
+    top: '46%',
+  },
+  offScreenGuideRight: {
+    right: 12,
+    top: '46%',
+  },
+  offScreenGuideUp: {
+    top: 80,
+    alignSelf: 'center',
+  },
+  offScreenGuideDown: {
+    bottom: 110,
+    alignSelf: 'center',
+  },
+  offScreenGuideEmoji: {
+    fontSize: 16,
+    marginBottom: 1,
+  },
+  offScreenGuideLabel: {
+    color: '#38BDF8',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  offScreenGuideSubLabel: {
+    color: '#94A3B8',
+    fontSize: 7,
+    fontWeight: 'bold',
+  },
   bottomHud: {
     position: 'absolute',
     bottom: 30,
@@ -910,37 +1324,180 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  throwCatchButton: {
-    width: '100%',
+  captureStatusBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 28,
-    borderWidth: 1.8,
-    borderTopColor: 'rgba(255, 255, 255, 0.65)',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
-    elevation: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
     marginBottom: 8,
+    gap: 8,
   },
-  throwButtonIcon: {
-    fontSize: 20,
-    marginRight: 8,
-  },
-  throwButtonText: {
-    fontSize: 16,
+  captureStatusText: {
+    fontSize: 13,
     fontWeight: '900',
-    letterSpacing: 1,
+    letterSpacing: 0.6,
+  },
+  arHintPill: {
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+    marginBottom: 8,
   },
   arHintText: {
     color: '#E2E8F0',
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
+  },
+  victoryModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 10, 25, 0.94)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  victoryCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 26,
+    borderWidth: 2,
+    borderColor: '#38BDF8',
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    boxShadow: '0 8px 32px rgba(56, 189, 248, 0.35)',
+    elevation: 16,
+  },
+  victoryGlowBadge: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    boxShadow: '0 0 20px rgba(56, 189, 248, 0.5)',
+    elevation: 8,
+  },
+  victoryEmoji: {
+    fontSize: 48,
+  },
+  victoryHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#22C55E',
+    letterSpacing: 0.8,
+    marginTop: 14,
+  },
+  victoryCreatureName: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  victoryRarityBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  victoryRarityText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  rewardRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+    marginBottom: 14,
+  },
+  rewardBox: {
+    flex: 1,
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  rewardValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#22C55E',
+  },
+  rewardLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#94A3B8',
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  levelUpBanner: {
+    backgroundColor: 'rgba(234, 179, 8, 0.2)',
+    borderColor: '#EAB308',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+    width: '100%',
+    alignItems: 'center',
+  },
+  levelUpText: {
+    color: '#FDE047',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  victoryFlavorText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 18,
+    lineHeight: 18,
+  },
+  victoryActionRow: {
+    width: '100%',
+    gap: 10,
+  },
+  victoryPrimaryBtn: {
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    width: '100%',
+    boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+    elevation: 4,
+  },
+  victoryPrimaryBtnText: {
+    color: '#0F172A',
+    fontWeight: '900',
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  victorySecondaryBtn: {
+    backgroundColor: '#1E293B',
+    paddingVertical: 12,
+    borderRadius: 16,
+    alignItems: 'center',
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  victorySecondaryBtnText: {
+    color: '#F1F5F9',
+    fontWeight: '800',
+    fontSize: 13,
   },
   fallbackContainer: {
     flex: 1,

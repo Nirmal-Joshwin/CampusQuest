@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.schemas import UserRegister, UserLogin, UserResponse, UserProfileUpdate, AuthResponse
+from app.config import settings
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -14,33 +15,46 @@ def register_user(payload: UserRegister, db: Session = Depends(get_db)):
     """
     Register a new Student or Admin account.
     """
-    # 1. Check existing email
+    # 1. Enforce Role Clearance / Privilege Escalation Mitigation
+    requested_role = payload.role.value if hasattr(payload.role, "value") else str(payload.role)
+    if requested_role.upper() == "ADMIN":
+        if not payload.admin_code or payload.admin_code.strip() != settings.ADMIN_REGISTRATION_KEY:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Administrative registration rejected: Valid administrator clearance code is required."
+            )
+        assigned_role = "ADMIN"
+    else:
+        assigned_role = "STUDENT"
+
+    # 2. Check existing email
     if db.query(User).filter(User.email == payload.email.lower().strip()).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An account with this email already exists."
         )
 
-    # 2. Check existing username
+    # 3. Check existing username
     if db.query(User).filter(User.username == payload.username.strip()).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This username callsign is already taken."
         )
 
-    # 3. Create user
+    # 4. Create user
     new_user = User(
         email=payload.email.lower().strip(),
         username=payload.username.strip(),
         hashed_password=hash_password(payload.password),
-        role=payload.role.value if hasattr(payload.role, "value") else str(payload.role),
+        role=assigned_role,
         department=payload.department.upper(),
         level=1,
         xp=0,
         energy=100,
         max_energy=100,
-        avatar_title=f"CIT {payload.department.upper()} Cadet"
+        avatar_title=f"CIT {payload.department.upper()} {'Admin' if assigned_role == 'ADMIN' else 'Cadet'}"
     )
+
 
     try:
         db.add(new_user)

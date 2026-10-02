@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # 1. PostgreSQL 16 with PostGIS Spatial Extension
+  # ============================================================================
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: campusquest_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-campusquest_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cit_secure_postgres_2026}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-campusquest_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - campusquest_net
+
+  # ============================================================================
+  # 2. FastAPI Production Backend (ASGI + Uvicorn)
+  # ============================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: campusquest_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-cit_secure_postgres_2026}@db:5432/${POSTGRES_DB:-campusquest_db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-cit_production_jwt_secret_key_2026_campusquest}
+      ADMIN_REGISTRATION_KEY: ${ADMIN_REGISTRATION_KEY:-CIT-ADMIN-KEY-2026}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://localhost:80,http://localhost:8000,http://localhost:8081}
+      HOST: 0.0.0.0
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - campusquest_net
+
+  # ============================================================================
+  # 3. Static Web Client & Nginx Reverse Proxy
+  # ============================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: campusquest_frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    networks:
+      - campusquest_net
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  campusquest_net:
+    driver: bridge

@@ -65,9 +65,9 @@ CIT_STRONGHOLDS = [
 ]
 
 class DefendStrongholdRequest(BaseModel):
-    stronghold_id: str
-    creature_name: str
-    defense_contribution: int = 150
+    stronghold_id: str = Field(..., min_length=1, max_length=50)
+    creature_name: str = Field(..., min_length=1, max_length=60)
+    defense_contribution: Optional[int] = 150
 
 @router.get("/strongholds")
 def get_campus_strongholds():
@@ -87,6 +87,7 @@ def defend_stronghold(
 ):
     """
     Station a player's creature at a stronghold to bolster their department's control.
+    Enforces server-side point capping (150 pts max) and deducts 10 Energy.
     """
     stronghold = next((s for s in CIT_STRONGHOLDS if s["id"] == request.stronghold_id), None)
     if not stronghold:
@@ -95,11 +96,20 @@ def defend_stronghold(
             detail="Stronghold not found."
         )
 
+    # 1. Energy check
+    if current_user.energy < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Insufficient energy! Bolstering stronghold defense requires at least 10 Energy."
+        )
+
     dept = current_user.department.upper() if current_user.department else "CSE"
     
-    # Increase department points
+    # 2. Server-enforced contribution points (prevent parameter tampering)
+    verified_contribution = 150
+
     current_pts = stronghold["department_points"].get(dept, 0)
-    new_pts = current_pts + request.defense_contribution
+    new_pts = current_pts + verified_contribution
     stronghold["department_points"][dept] = new_pts
 
     # Recalculate controlling department
@@ -108,16 +118,18 @@ def defend_stronghold(
     stronghold["defense_score"] = stronghold["department_points"][top_dept]
     stronghold["top_defender"] = f"{current_user.username} ({dept})"
 
-    # Award cadet personal reward
+    # Deduct energy and award personal reward
+    current_user.energy = max(0, current_user.energy - 10)
     current_user.xp += 100
     current_user.coins += 25
     db.commit()
 
     return {
         "success": True,
-        "message": f"🛡️ Stationed {request.creature_name} at {stronghold['name']}!\n+{request.defense_contribution} Control Points added for {dept}!\n+100 XP & +25 Data Credits awarded.",
+        "message": f"🛡️ Stationed {request.creature_name} at {stronghold['name']}!\n+{verified_contribution} Control Points added for {dept}!\n+100 XP & +25 Data Credits awarded.",
         "stronghold": stronghold
     }
+
 
 @router.get("/leaderboard")
 def get_department_leaderboard():

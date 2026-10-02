@@ -2,8 +2,9 @@ import logging
 import random
 from typing import List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -35,15 +36,39 @@ def execute_friend_duel(
 ):
     """
     Execute a 3-turn tactical duel with a nearby campus friend.
+    Validates moves, prevents self-dueling, and deducts tactical energy.
     """
+    # 1. Prevent self-dueling exploit
+    if request.opponent_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cadets cannot initiate duels against themselves."
+        )
+
+    # 2. Check energy requirement
+    if current_user.energy < 5:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Insufficient combat energy! Proximity duels require at least 5 Energy."
+        )
+
     choices = ["OVERCLOCK", "FIREWALL", "EMP"]
+
+    # 3. Validate tactical move inputs
+    cleaned_moves = [m.upper().strip() for m in request.rounds[:3]]
+    if not cleaned_moves or any(m not in choices for m in cleaned_moves):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid tactical moves. Allowed actions are: {', '.join(choices)}"
+        )
+
     player_score = 0
     opponent_score = 0
     round_results = []
 
-    for idx, p_move in enumerate(request.rounds[:3]):
-        p_move_upper = p_move.upper()
+    for idx, p_move_upper in enumerate(cleaned_moves):
         o_move = random.choice(choices)
+
 
         if p_move_upper == o_move:
             outcome = "DRAW"
@@ -65,9 +90,11 @@ def execute_friend_duel(
     xp_earned = 150 if is_winner else 60
     coins_earned = 25 if is_winner else 10
 
+    current_user.energy = max(0, current_user.energy - 5)
     current_user.xp += xp_earned
     current_user.coins += coins_earned
     db.commit()
+
 
     return {
         "success": True,
