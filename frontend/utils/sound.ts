@@ -169,6 +169,8 @@ const getUri = (type: 'tap' | 'swoosh' | 'catch' | 'coin' | 'radar' | 'battle'):
 };
 
 // Generic safe sound player
+const cachedNativePlayers: Record<string, any> = {};
+
 const playSoundUri = async (uri: string) => {
   try {
     if (Platform.OS === 'web') {
@@ -178,7 +180,11 @@ const playSoundUri = async (uri: string) => {
         audio.play().catch(() => {});
       }
     } else if (nativeCreateAudioPlayer) {
-      const player = nativeCreateAudioPlayer(uri);
+      if (!cachedNativePlayers[uri]) {
+        cachedNativePlayers[uri] = nativeCreateAudioPlayer(uri);
+      }
+      const player = cachedNativePlayers[uri];
+      player.seekTo(0);
       player.play();
     }
   } catch {
