@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", DEFAULT_INSECURE_SECRET)
-    ADMIN_REGISTRATION_KEY: str = os.getenv("ADMIN_REGISTRATION_KEY", "CIT-ADMIN-KEY-2026")
+    ADMIN_REGISTRATION_KEY: str = os.getenv("ADMIN_REGISTRATION_KEY", "")
     ALLOWED_ORIGINS: str = os.getenv(
         "ALLOWED_ORIGINS",
         "http://localhost:8081,http://localhost:19006,exp://10.116.198.55:8081"
@@ -26,11 +26,15 @@ class Settings(BaseSettings):
         case_sensitive = True
 
     def validate_security(self):
-        if self.ENVIRONMENT.lower() == "production" and self.JWT_SECRET_KEY == DEFAULT_INSECURE_SECRET:
-            raise ValueError(
-                "CRITICAL SECURITY ERROR: Running in production mode with default hardcoded JWT_SECRET_KEY! "
-                "Set a secure JWT_SECRET_KEY environment variable."
-            )
+        if self.ENVIRONMENT.lower() != "development":
+            if self.JWT_SECRET_KEY == DEFAULT_INSECURE_SECRET or not self.JWT_SECRET_KEY:
+                raise ValueError(
+                    "CRITICAL SECURITY ERROR: Running in non-development mode with default or missing JWT_SECRET_KEY!"
+                )
+            if not self.ADMIN_REGISTRATION_KEY:
+                raise ValueError(
+                    "CRITICAL SECURITY ERROR: ADMIN_REGISTRATION_KEY must be set in non-development environments."
+                )
 
 settings = Settings()
 settings.validate_security()
