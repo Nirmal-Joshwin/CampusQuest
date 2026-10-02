@@ -43,6 +43,9 @@ EMOJI_MAP = {
     "AeroMech": "🚀",
 }
 
+# Anti-farming / Tracking
+USER_LAST_LOCATION: Dict[str, dict] = {}             # user_id -> {"lat", "lng", "time"}
+
 # Fixed Campus Collectible Loot Caches
 CANONICAL_CAMPUS_LOOT = [
     {
@@ -138,6 +141,22 @@ def record_capture(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"{payload.creature_name} is already registered in your Bestiary! Campus anomalies cannot be farmed repeatedly."
         )
+
+    # Teleportation / Speed Check (Max ~15m/s = ~54km/h = car speed in campus)
+    now = datetime.now(timezone.utc)
+    user_loc = USER_LAST_LOCATION.get(current_user.id)
+    if user_loc:
+        time_elapsed = (now - user_loc["time"]).total_seconds()
+        if time_elapsed > 0:
+            travel_dist = get_distance_meters(payload.latitude, payload.longitude, user_loc["lat"], user_loc["lng"])
+            speed = travel_dist / time_elapsed
+            if speed > 15: # > 15 m/s
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Movement speed too high. Please slow down. (Anti-Spoofing Lock)"
+                )
+    
+    USER_LAST_LOCATION[current_user.id] = {"lat": payload.latitude, "lng": payload.longitude, "time": now}
 
     rarity_str = payload.rarity.value if hasattr(payload.rarity, "value") else str(payload.rarity)
     xp_earned = XP_MAP.get(rarity_str.upper(), 100)

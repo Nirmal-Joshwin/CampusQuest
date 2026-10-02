@@ -421,21 +421,23 @@ export default function CatchScreen() {
           </View>
         )}
 
-        {/* VPS Debug Telemetry Overlay */}
-        <View style={{ position: 'absolute', top: 120, left: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 6, borderRadius: 4 }} pointerEvents="none">
-          <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
-            VPS: {vps.status} (FPS: {vps.fps})
-          </Text>
-          <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
-            Yaw: {anchor?.refYaw?.toFixed(2)} vs {vps.offScreenAngleDeg}°
-          </Text>
-          <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
-            ScrX: {vps.screenXPercent?.toFixed(1)}% | ScrY: {vps.screenYPercent?.toFixed(1)}%
-          </Text>
-          <Text style={{ color: 'cyan', fontSize: 10, fontFamily: 'monospace' }}>
-            AR FIX UNVERIFIED - needs on-device test
-          </Text>
-        </View>
+        {/* VPS Debug Telemetry Overlay - Hidden in production */}
+        {__DEV__ && (
+          <View style={{ position: 'absolute', top: 120, left: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 6, borderRadius: 4 }} pointerEvents="none">
+            <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
+              VPS: {vps.status} (FPS: {vps.fps})
+            </Text>
+            <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
+              Yaw: {anchor?.refYaw?.toFixed(2)} vs {vps.offScreenAngleDeg}°
+            </Text>
+            <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
+              ScrX: {vps.screenXPercent?.toFixed(1)}% | ScrY: {vps.screenYPercent?.toFixed(1)}%
+            </Text>
+            <Text style={{ color: 'cyan', fontSize: 10, fontFamily: 'monospace' }}>
+              AR FIX UNVERIFIED - needs on-device test
+            </Text>
+          </View>
+        )}
       </SafeAreaView>
 
         {/* QR Scanner Mode Overlay */}
