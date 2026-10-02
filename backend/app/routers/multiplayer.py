@@ -8,6 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User, Capture, RaidGroup, RaidMember
+from app.auth import get_current_user
+
+logger = logging.getLogger("CampusQuest")
+router = APIRouter(prefix="/api/multiplayer", tags=["Multiplayer & Raids"])
 
 # Remove ACTIVE_RAID_GROUPS: Dict[str, dict] = {}
 # Now we use the database to prevent desync across workers
