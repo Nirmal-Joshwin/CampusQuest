@@ -337,6 +337,10 @@ export default function ARMainScreen() {
         name: spawnToCatch.name,
         rarity: spawnToCatch.rarity || 'COMMON',
         distance: Math.round(dist).toString(),
+        creature_lat: spawnToCatch.latitude.toString(),
+        creature_lng: spawnToCatch.longitude.toString(),
+        user_lat: currentCoords.latitude.toString(),
+        user_lng: currentCoords.longitude.toString(),
       },
     });
   };

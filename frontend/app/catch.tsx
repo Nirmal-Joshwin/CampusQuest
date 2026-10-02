@@ -43,6 +43,10 @@ export default function CatchScreen() {
     name?: string;
     rarity?: string;
     distance?: string;
+    creature_lat?: string;
+    creature_lng?: string;
+    user_lat?: string;
+    user_lng?: string;
   }>();
 
   const creatureName = params.name || 'Campus Monster';
@@ -98,6 +102,7 @@ export default function CatchScreen() {
     mode: trackingMode,
     setMode: setTrackingMode,
     lockAnchorInFront,
+    anchorToBearing,
     spawnRandomAnchorInRadar,
     reanchorAtScreenTap,
   } = useVPSTracker({ defaultDepthMeters: 2.5 });
@@ -105,9 +110,24 @@ export default function CatchScreen() {
   const [vpsTapBanner, setVpsTapBanner] = useState<string | null>(null);
 
   useEffect(() => {
-    // Lock 3D Super Fluffy Cat directly in front of the camera lens so it's immediately visible
-    lockAnchorInFront(creatureName, rarity, 2.5);
-  }, [creatureName, rarity, lockAnchorInFront]);
+    if (params.creature_lat && params.creature_lng && params.user_lat && params.user_lng) {
+      const userCoords = { latitude: parseFloat(params.user_lat), longitude: parseFloat(params.user_lng) };
+      const creatureCoords = { latitude: parseFloat(params.creature_lat), longitude: parseFloat(params.creature_lng) };
+      
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+      const toDeg = (rad: number) => (rad * 180) / Math.PI;
+      const dLng = toRad(creatureCoords.longitude - userCoords.longitude);
+      const y = Math.sin(dLng) * Math.cos(toRad(creatureCoords.latitude));
+      const x = Math.cos(toRad(userCoords.latitude)) * Math.sin(toRad(creatureCoords.latitude)) - Math.sin(toRad(userCoords.latitude)) * Math.cos(toRad(creatureCoords.latitude)) * Math.cos(dLng);
+      const bearing = (toDeg(Math.atan2(y, x)) + 360) % 360;
+      
+      const distance = params.distance ? parseFloat(params.distance) : 2.5;
+      
+      anchorToBearing(bearing, distance);
+    } else {
+      lockAnchorInFront(creatureName, rarity, 2.5);
+    }
+  }, [creatureName, rarity, params.creature_lat, params.creature_lng, params.user_lat, params.user_lng, params.distance, anchorToBearing, lockAnchorInFront]);
 
   const handleScreenTapToPlace = (event: any) => {
     if (challenge && !challengePassed) return;
