@@ -250,12 +250,8 @@ export function useVPSTracker(options: UseVPSOptions = {}) {
           accelSubscription = Accelerometer.addListener((accelData) => {
             if (!isMounted) return;
 
-            // In portrait orientation:
-            // -y is gravity when held upright (level with horizon, pitch = 0)
-            // z > 0 when top of phone tilted forward towards ground (pitch > 0, looking down)
-            // z < 0 when top of phone tilted back towards ceiling (pitch < 0, looking up)
-            const pitch = Math.atan2(accelData.z, -accelData.y);
-            const roll = Math.atan2(accelData.x, -accelData.y);
+            const pitch = Math.atan2(accelData.z, accelData.y);
+            const roll = Math.atan2(accelData.x, accelData.y);
 
             currentAttitudeRef.current.pitch = pitch;
             currentAttitudeRef.current.roll = roll;
@@ -270,14 +266,33 @@ export function useVPSTracker(options: UseVPSOptions = {}) {
 
             const smooth = smoothedAttitudeRef.current;
             const dPitch = normalizeAngleRad(pitch - smooth.pitch);
-            // Highly responsive pitch tracking with tremor filtering
             if (Math.abs(dPitch) > 0.008) {
               smooth.pitch = normalizeAngleRad(smooth.pitch + dPitch * 0.55);
               updateProjection();
             }
             smooth.roll = roll;
           });
+        }
 
+        // 3. DeviceMotion listener for Yaw fallback (if compass is blocked or unavailable)
+        if (isDmAvail) {
+          DeviceMotion.setUpdateInterval(sensorIntervalMs);
+          dmSubscription = DeviceMotion.addListener((dmData) => {
+            if (!isMounted) return;
+            // Only use this if trueHeading hasn't locked on
+            if (!hasAlignedInitialHeadingRef.current && dmData.rotation) {
+              // alpha is 0..2PI counter-clockwise. Convert to standard clockwise heading.
+              const yaw = normalizeAngleRad(-dmData.rotation.alpha);
+              currentAttitudeRef.current.yaw = yaw;
+              
+              const smooth = smoothedAttitudeRef.current;
+              const dYaw = normalizeAngleRad(yaw - smooth.yaw);
+              if (Math.abs(dYaw) > 0.008) {
+                smooth.yaw = normalizeAngleRad(smooth.yaw + dYaw * 0.55);
+                updateProjection();
+              }
+            }
+          });
         }
       } catch (err) {
         console.warn('[VPS] Sensor initialization error:', err);
@@ -303,7 +318,7 @@ export function useVPSTracker(options: UseVPSOptions = {}) {
         name,
         rarity,
         refYaw: current.yaw,
-        refPitch: current.pitch,
+        refPitch: 0.05, // Fixed slightly below horizon for consistent fallback spawn
         depthMeters: depth,
         groundOffset: defaultGroundOffset,
         lockedAt: Date.now(),
@@ -326,13 +341,12 @@ export function useVPSTracker(options: UseVPSOptions = {}) {
       depthMeters: number = defaultDepthMeters,
       groundOffset: number = defaultGroundOffset
     ) => {
-      const current = currentAttitudeRef.current;
       const newAnchor: VPSAnchor = {
         id: `vps-bearing-${Date.now()}`,
         name: 'WorldTarget',
         rarity: 'COMMON',
         refYaw: (bearingDeg * Math.PI) / 180,
-        refPitch: current.pitch + 0.12,
+        refPitch: 0.05, // Fixed slightly below horizon
         depthMeters,
         groundOffset,
         lockedAt: Date.now(),
