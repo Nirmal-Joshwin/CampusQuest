@@ -2,15 +2,8 @@ import React from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider } from '../context/AuthContext';
-import * as Sentry from '@sentry/react-native';
 
-Sentry.init({
-  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || '',
-  debug: false,
-  tracesSampleRate: 1.0,
-});
-
-function RootLayout() {
+export default function RootLayout() {
   return (
     <AuthProvider>
       <StatusBar style="light" />
@@ -67,5 +60,3 @@ function RootLayout() {
     </AuthProvider>
   );
 }
-
-export default Sentry.wrap(RootLayout);
