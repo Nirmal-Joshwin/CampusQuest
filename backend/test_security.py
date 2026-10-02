@@ -93,8 +93,8 @@ def test_security_hardening():
     res_valid_cit = client.post("/api/gameplay/catch", json={
         "creature_name": "ByteFalcon",
         "rarity": "COMMON",
-        "latitude": 11.0280,
-        "longitude": 77.0275
+        "latitude": 11.028420,
+        "longitude": 77.026510
     }, headers=student_headers)
     assert res_valid_cit.status_code == 200, f"Expected 200 for inside-campus coordinate, got {res_valid_cit.status_code}: {res_valid_cit.text}"
     assert res_valid_cit.json()["success"] is True

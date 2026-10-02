@@ -13,7 +13,13 @@ def test_multiplayer():
     assert res.status_code == 200, f"Expected 200, got {res.status_code}"
     data = res.json()
     assert "peers" in data
-    print(f"[PASS] /api/multiplayer/peers returned {data}")
+    # 2. Test WebSocket missing token (SEC-CRIT-03)
+    try:
+        with client.websocket_connect("/api/multiplayer/ws/radar/test-user") as websocket:
+            websocket.receive_json()
+            assert False, "WebSocket should have been rejected without a token"
+    except Exception as e:
+        print(f"[PASS] Unauthenticated WebSocket properly rejected with error: {repr(e)}")
 
 if __name__ == "__main__":
     try:
