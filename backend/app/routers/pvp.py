@@ -27,6 +27,18 @@ class DuelRequest(BaseModel):
     opponent_name: str
     player_creature: str = "Campus Creature"
     rounds: List[str] = Field(..., example=["OVERCLOCK", "FIREWALL", "EMP"])
+    latitude: float
+    longitude: float
+
+from app.routers.multiplayer import manager
+import math
+
+def get_distance_meters(lat1, lon1, lat2, lon2):
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi, dlam = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 @router.post("/duel")
 def execute_friend_duel(
@@ -43,6 +55,21 @@ def execute_friend_duel(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cadets cannot initiate duels against themselves."
+        )
+
+    # SEC-HIGH-06 Fix: Validate proximity to opponent
+    opponent = manager.peer_positions.get(request.opponent_id)
+    if not opponent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Opponent is not currently active on campus radar."
+        )
+    
+    dist = get_distance_meters(request.latitude, request.longitude, opponent["latitude"], opponent["longitude"])
+    if dist > 50:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Opponent is too far away ({int(dist)}m). Proximity duels require being within 35m."
         )
 
     # 2. Check energy requirement

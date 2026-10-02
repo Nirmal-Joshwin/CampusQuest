@@ -68,6 +68,8 @@ class DefendStrongholdRequest(BaseModel):
     stronghold_id: str = Field(..., min_length=1, max_length=50)
     creature_name: str = Field(..., min_length=1, max_length=60)
     defense_contribution: Optional[int] = 150
+    latitude: float
+    longitude: float
 
 @router.get("/strongholds")
 def get_campus_strongholds():
@@ -78,6 +80,14 @@ def get_campus_strongholds():
         "count": len(CIT_STRONGHOLDS),
         "strongholds": CIT_STRONGHOLDS
     }
+
+import math
+def get_distance_meters(lat1, lon1, lat2, lon2):
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi, dlam = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 @router.post("/defend")
 def defend_stronghold(
@@ -94,6 +104,14 @@ def defend_stronghold(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Stronghold not found."
+        )
+
+    # SEC-HIGH-06 Fix: Validate proximity
+    dist = get_distance_meters(request.latitude, request.longitude, stronghold["latitude"], stronghold["longitude"])
+    if dist > 50:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You are too far ({int(dist)}m) to defend this stronghold. Maximum range is 35m."
         )
 
     # 1. Energy check
