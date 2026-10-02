@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/spawns", tags=["Spawns"])
 
 @router.get("", response_model=List[SpawnResponse])
 def get_spawns(
-    count: int = Query(11, ge=1, le=50, description="Number of canonical story spawns to return"),
+    count: int = Query(12, ge=1, le=50, description="Number of canonical story spawns to return"),
     user_lat: float = Query(None, description="Optional player GPS latitude for dynamic test anchoring"),
     user_lng: float = Query(None, description="Optional player GPS longitude for dynamic test anchoring"),
     persist: bool = Query(False, description="Whether to persist story spawns to PostgreSQL"),

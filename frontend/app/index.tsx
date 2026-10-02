@@ -125,7 +125,7 @@ export default function ARMainScreen() {
     try {
       const activeCoords = userCoords || (location ? { latitude: location.latitude, longitude: location.longitude } : null);
       const [spawnData, lootData, bestiaryData, peersData, friendsData, strongholdsData] = await Promise.all([
-        fetchSpawns(11, activeCoords),
+        fetchSpawns(12, activeCoords),
         fetchLootCratesApi(),
         fetchBestiary(token),
         fetchActivePeersApi(),

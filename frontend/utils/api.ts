@@ -58,6 +58,7 @@ export const FALLBACK_CIT_SPAWNS: SpawnPoint[] = [
   { id: 'cit-story-8', name: 'SiliconTitan', rarity: 'COMMON', latitude: 11.029350, longitude: 77.028640 },
   { id: 'cit-story-9', name: 'CampusOwl', rarity: 'COMMON', latitude: 11.026610, longitude: 77.028020 },
   { id: 'cit-story-10', name: 'AeroMech', rarity: 'COMMON', latitude: 11.026150, longitude: 77.027200 },
+  { id: 'cit-story-cat', name: 'Super Fluffy Cat', rarity: 'RARE', latitude: 11.027500, longitude: 77.027000 },
 ];
 
 export interface LootCrateItem {
