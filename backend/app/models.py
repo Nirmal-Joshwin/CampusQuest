@@ -140,3 +140,25 @@ class Friendship(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
+class RaidGroup(Base):
+    __tablename__ = "raid_groups"
+
+    raid_id = Column(String(36), primary_key=True)
+    boss_name = Column(String(100), nullable=False)
+    campus_sector = Column(String(100), nullable=False)
+    host_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    host_username = Column(String(60), nullable=False)
+    status = Column(String(20), nullable=False, default="OPEN")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class RaidMember(Base):
+    __tablename__ = "raid_members"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    raid_id = Column(String(36), ForeignKey("raid_groups.raid_id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    username = Column(String(60), nullable=False)
+    department = Column(String(60), nullable=False)
+    level = Column(Integer, nullable=False)
+
+

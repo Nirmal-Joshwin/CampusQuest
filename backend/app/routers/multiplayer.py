@@ -7,53 +7,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User, Capture
-from app.routers.auth import get_current_user
+from app.models import User, Capture, RaidGroup, RaidMember
 
-logger = logging.getLogger("CampusQuest")
-router = APIRouter(prefix="/api/multiplayer", tags=["Multiplayer & Tag-Team Raids"])
-
-# In-memory Real-time Peer Tracker & Connection Manager
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-        self.peer_positions: Dict[str, dict] = {}
-
-    async def connect(self, user_id: str, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections[user_id] = websocket
-
-    def disconnect(self, user_id: str):
-        if user_id in self.active_connections:
-            del self.active_connections[user_id]
-        if user_id in self.peer_positions:
-            del self.peer_positions[user_id]
-
-    def update_position(self, user_id: str, data: dict):
-        self.peer_positions[user_id] = {
-            "user_id": user_id,
-            "username": data.get("username", "Cadet"),
-            "department": data.get("department", "CSE"),
-            "level": data.get("level", 1),
-            "avatar_title": data.get("avatar_title", "Explorer"),
-            "latitude": data.get("latitude", 11.0278),
-            "longitude": data.get("longitude", 77.0282),
-            "updated_at": datetime.utcnow().isoformat(),
-        }
-
-    async def broadcast_peers(self):
-        peers_list = list(self.peer_positions.values())
-        payload = {"type": "PEERS_UPDATE", "peers": peers_list}
-        for user_id, ws in list(self.active_connections.items()):
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                pass
-
-manager = ConnectionManager()
-
-# In-memory Active Tag-Team Raid Groups
-ACTIVE_RAID_GROUPS: Dict[str, dict] = {}
+# Remove ACTIVE_RAID_GROUPS: Dict[str, dict] = {}
+# Now we use the database to prevent desync across workers
 
 class CreateRaidRequest(BaseModel):
     boss_name: str = Field("CIT CyberDragon", example="CIT CyberDragon")
@@ -113,82 +70,109 @@ def get_active_peers():
         "peers": list(manager.peer_positions.values())
     }
 
+def _serialize_raid(db: Session, raid: RaidGroup):
+    members = db.query(RaidMember).filter(RaidMember.raid_id == raid.raid_id).all()
+    return {
+        "raid_id": raid.raid_id,
+        "boss_name": raid.boss_name,
+        "campus_sector": raid.campus_sector,
+        "host_user_id": raid.host_user_id,
+        "host_username": raid.host_username,
+        "status": raid.status,
+        "created_at": raid.created_at.isoformat() if raid.created_at else None,
+        "teammates": [
+            {
+                "user_id": m.user_id,
+                "username": m.username,
+                "department": m.department,
+                "level": m.level,
+            } for m in members
+        ]
+    }
+
 @router.post("/raid/create")
 def create_tag_team_raid(
     request: CreateRaidRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Host a new cooperative Tag-Team Raid lobby for a Legendary Anomaly.
     """
     raid_id = f"raid-{uuid.uuid4().hex[:6]}"
-    raid_data = {
-        "raid_id": raid_id,
-        "boss_name": request.boss_name,
-        "campus_sector": request.campus_sector,
-        "host_user_id": current_user.id,
-        "host_username": current_user.username,
-        "created_at": datetime.utcnow().isoformat(),
-        "teammates": [
-            {
-                "user_id": current_user.id,
-                "username": current_user.username,
-                "department": current_user.department,
-                "level": current_user.level,
-            }
-        ],
-        "status": "OPEN", # OPEN, IN_PROGRESS, COMPLETED
-    }
-    ACTIVE_RAID_GROUPS[raid_id] = raid_data
+    
+    new_raid = RaidGroup(
+        raid_id=raid_id,
+        boss_name=request.boss_name,
+        campus_sector=request.campus_sector,
+        host_user_id=current_user.id,
+        host_username=current_user.username,
+        status="OPEN"
+    )
+    db.add(new_raid)
+    
+    host_member = RaidMember(
+        raid_id=raid_id,
+        user_id=current_user.id,
+        username=current_user.username,
+        department=current_user.department,
+        level=current_user.level
+    )
+    db.add(host_member)
+    db.commit()
 
     return {
         "success": True,
         "message": f"Tag-Team Strike Lobby created for {request.boss_name}!",
-        "raid": raid_data
+        "raid": _serialize_raid(db, new_raid)
     }
 
 @router.post("/raid/join")
 def join_tag_team_raid(
     request: JoinRaidRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Join an open cooperative Tag-Team Raid lobby with nearby cadets.
     """
-    raid = ACTIVE_RAID_GROUPS.get(request.raid_id)
+    raid = db.query(RaidGroup).filter(RaidGroup.raid_id == request.raid_id).first()
     if not raid:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Raid lobby '{request.raid_id}' not found or has expired."
         )
 
-    # Check if already joined
-    if not any(m["user_id"] == current_user.id for m in raid["teammates"]):
-        raid["teammates"].append({
-            "user_id": current_user.id,
-            "username": current_user.username,
-            "department": current_user.department,
-            "level": current_user.level,
-        })
+    existing = db.query(RaidMember).filter(RaidMember.raid_id == request.raid_id, RaidMember.user_id == current_user.id).first()
+    if not existing:
+        new_member = RaidMember(
+            raid_id=raid.raid_id,
+            user_id=current_user.id,
+            username=current_user.username,
+            department=current_user.department,
+            level=current_user.level
+        )
+        db.add(new_member)
+        db.commit()
 
     return {
         "success": True,
-        "message": f"Joined Tag-Team Strike Group for {raid['boss_name']}!",
-        "raid": raid
+        "message": f"Joined Tag-Team Strike Group for {raid.boss_name}!",
+        "raid": _serialize_raid(db, raid)
     }
 
 @router.get("/raid/{raid_id}")
-def get_raid_status(raid_id: str):
+def get_raid_status(raid_id: str, db: Session = Depends(get_db)):
     """
     Get current lobby and teammate status for a tag team raid.
     """
-    raid = ACTIVE_RAID_GROUPS.get(raid_id)
+    raid = db.query(RaidGroup).filter(RaidGroup.raid_id == raid_id).first()
     if not raid:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Raid group '{raid_id}' not found."
         )
-    return raid
+    return _serialize_raid(db, raid)
 
 @router.post("/raid/{raid_id}/complete")
 def complete_tag_team_raid(
@@ -200,31 +184,29 @@ def complete_tag_team_raid(
     Complete the tag-team raid, awarding shared bonus XP and bestiary registration to all teammates.
     Prevents exploitation by enforcing single completion and membership verification.
     """
-    raid = ACTIVE_RAID_GROUPS.get(raid_id)
+    raid = db.query(RaidGroup).filter(RaidGroup.raid_id == raid_id).first()
     if not raid:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Raid group '{raid_id}' not found."
         )
 
-    # 1. Enforce single completion (prevent infinite XP farming)
-    if raid.get("status") == "COMPLETED":
+    if raid.status == "COMPLETED":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Raid rewards have already been claimed! Anomaly strike is completed."
         )
 
-    # 2. Enforce team membership verification
-    is_teammate = raid.get("host_user_id") == current_user.id or any(
-        m.get("user_id") == current_user.id for m in raid.get("teammates", [])
-    )
+    members = db.query(RaidMember).filter(RaidMember.raid_id == raid_id).all()
+    is_teammate = raid.host_user_id == current_user.id or any(m.user_id == current_user.id for m in members)
+    
     if not is_teammate:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access Denied: You must be a deployed member of this strike team to complete the raid."
         )
 
-    raid["status"] = "COMPLETED"
+    raid.status = "COMPLETED"
 
     # Award +2000 Bonus XP & Data Credits
     current_user.xp += 2000
@@ -233,8 +215,8 @@ def complete_tag_team_raid(
 
     return {
         "success": True,
-        "message": f"🎉 TAG-TEAM VICTORY! {raid['boss_name']} secured with your strike team!\n+2000 XP & +100 Data Credits awarded to all members!",
-        "raid": raid
+        "message": f"🎉 TAG-TEAM VICTORY! {raid.boss_name} secured with your strike team!\n+2000 XP & +100 Data Credits awarded to all members!",
+        "raid": _serialize_raid(db, raid)
     }
 
 
