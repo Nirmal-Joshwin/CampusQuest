@@ -100,6 +100,34 @@ def record_capture(
             detail="GPS coordinates rejected: Anomaly capture requires physical presence within the CIT Campus perimeter."
         )
 
+    # SEC-HIGH-04 Fix: Server-side validation of spawn existence and proximity
+    import math
+    def get_distance_meters(lat1, lon1, lat2, lon2):
+        R = 6371000
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi, dlam = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    # Retrieve valid spawns, injecting HomeSentinel at user's location to allow testing
+    from app.geofence import get_cit_story_spawns
+    valid_spawns = get_cit_story_spawns(user_lat=payload.latitude, user_lng=payload.longitude)
+    target_spawn = next((s for s in valid_spawns if s["name"] == payload.creature_name), None)
+    
+    if not target_spawn:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Validation failed: Creature '{payload.creature_name}' does not exist on campus."
+        )
+    
+    dist = get_distance_meters(payload.latitude, payload.longitude, target_spawn["latitude"], target_spawn["longitude"])
+    # 35m + 15m GPS drift tolerance
+    if dist > 50:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Validation failed: You are {int(dist)}m away. Radar limit is 35m."
+        )
+
     # Enforce unique one-time creature capture (no farming)
     already_captured = db.query(Capture).filter(
         Capture.user_id == current_user.id,
