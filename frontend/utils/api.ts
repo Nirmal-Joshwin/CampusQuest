@@ -204,9 +204,13 @@ export async function recordCaptureApi(
       });
       return res.data;
     }
-  } catch (e) {
-    console.warn('[Catch] API recording failed, using local offline calculation:', e);
+  } catch (e: any) {
+    if (e.response?.data?.detail) {
+      throw new Error(e.response.data.detail);
+    }
+    throw e;
   }
+  // Guest mode mock fallback
   return {
     success: true,
     message: `Captured ${payload.creature_name}!`,
@@ -243,9 +247,13 @@ export async function claimLootCrateApi(crateId: string, token?: string | null) 
       );
       return res.data;
     }
-  } catch (e) {
-    console.warn('[Loot] Claim API failed:', e);
+  } catch (e: any) {
+    if (e.response?.data?.detail) {
+      throw new Error(e.response.data.detail);
+    }
+    throw e;
   }
+  // Guest mode mock fallback
   return {
     success: true,
     reward_type: 'ENERGY',
