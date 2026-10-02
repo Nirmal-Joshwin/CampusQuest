@@ -13,6 +13,38 @@ from app.auth import get_current_user
 logger = logging.getLogger("CampusQuest")
 router = APIRouter(prefix="/api/multiplayer", tags=["Multiplayer & Raids"])
 
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.peer_positions: Dict[str, dict] = {}
+
+    async def connect(self, user_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[user_id] = websocket
+
+    def disconnect(self, user_id: str):
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+        if user_id in self.peer_positions:
+            del self.peer_positions[user_id]
+
+    def update_position(self, user_id: str, data: dict):
+        self.peer_positions[user_id] = data
+
+    async def broadcast_peers(self):
+        payload = {
+            "type": "PEER_SYNC",
+            "active_cadets_count": len(self.peer_positions),
+            "peers": list(self.peer_positions.values())
+        }
+        for user_id, connection in list(self.active_connections.items()):
+            try:
+                await connection.send_json(payload)
+            except Exception:
+                pass
+
+manager = ConnectionManager()
+
 # Remove ACTIVE_RAID_GROUPS: Dict[str, dict] = {}
 # Now we use the database to prevent desync across workers
 
