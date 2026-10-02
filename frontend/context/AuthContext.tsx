@@ -32,6 +32,7 @@ interface AuthContextType {
   ) => Promise<boolean>;
   logout: () => void;
   updateProfile: (data: Partial<UserProfile>) => Promise<boolean>;
+  loginAsGuest: () => void;
 }
 
 // Default Guest Cadet fallback profile
@@ -52,9 +53,14 @@ const DEFAULT_GUEST_USER: UserProfile = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<UserProfile | null>(DEFAULT_GUEST_USER);
-  const [token, setToken] = useState<string | null>('guest-token');
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const loginAsGuest = () => {
+    setUser(DEFAULT_GUEST_USER);
+    setToken('guest-token');
+  };
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
@@ -72,13 +78,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return false;
     } catch (error: any) {
       console.warn('[Auth] Login error:', error?.response?.data || error.message);
-      // Fallback guest login if backend is disconnected
-      setUser({
-        ...DEFAULT_GUEST_USER,
-        email,
-        username: email.split('@')[0],
-      });
-      return true;
+      const errorMsg = error?.response?.data?.detail;
+      if (errorMsg) {
+        throw new Error(typeof errorMsg === 'string' ? errorMsg : 'Invalid credentials');
+      }
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -156,6 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         register,
         logout,
         updateProfile,
+        loginAsGuest,
       }}
     >
       {children}

@@ -32,7 +32,7 @@ const DEPARTMENTS = ['CSE', 'ECE', 'MECH', 'CIVIL', 'IT', 'AI&DS'];
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, register, isLoading } = useAuth();
+  const { login, register, isLoading, loginAsGuest } = useAuth();
 
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
@@ -269,10 +269,11 @@ export default function LoginScreen() {
               onPress={() => {
                 triggerHapticTap();
                 playSwooshSound();
+                loginAsGuest();
                 router.replace('/');
               }}
             >
-              <Text style={styles.guestButtonText}>Continue as Guest Cadet ➔</Text>
+              <Text style={styles.guestButtonText}>Play Offline as Guest ➔</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
