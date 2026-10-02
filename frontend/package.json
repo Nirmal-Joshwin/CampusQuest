@@ -13,6 +13,7 @@
     "postinstall": "node patch-rn-private-fields.js"
   },
   "dependencies": {
+    "@sentry/react-native": "~7.11.0",
     "axios": "^1.7.9",
     "expo": "~57.0.25",
     "expo-asset": "~57.0.18",
