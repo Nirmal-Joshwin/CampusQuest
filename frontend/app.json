@@ -32,7 +32,12 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "CAMERA"
-      ]
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCYnCQihRAKlR012AuZQmhWcqAbDKVnU6o"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png",
