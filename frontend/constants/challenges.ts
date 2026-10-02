@@ -129,6 +129,24 @@ export const CREATURE_CHALLENGES: Record<string, CreatureChallenge> = {
 };
 
 export function getCreatureChallenge(creatureName: string): CreatureChallenge | null {
-  return CREATURE_CHALLENGES[creatureName] || null;
+  const challenge = CREATURE_CHALLENGES[creatureName];
+  if (!challenge) return null;
+
+  // Clone to avoid mutating the original constant
+  const cloned = { ...challenge, options: [...challenge.options] };
+  
+  // Save the correct answer text
+  const correctAnswer = cloned.options[cloned.correctIndex];
+
+  // Fisher-Yates shuffle
+  for (let i = cloned.options.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [cloned.options[i], cloned.options[j]] = [cloned.options[j], cloned.options[i]];
+  }
+
+  // Find the new index of the correct answer
+  cloned.correctIndex = cloned.options.indexOf(correctAnswer);
+
+  return cloned;
 }
 
