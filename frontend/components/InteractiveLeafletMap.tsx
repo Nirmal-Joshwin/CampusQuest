@@ -456,6 +456,7 @@ export default function InteractiveLeafletMap({
     }
 
     // Telemetry Update via JS injection (60 FPS, No Reload)
+    let hasCenteredInitial = false;
     window.updateTelemetry = function(data) {
       if (!map) return;
       if (data.userLat && data.userLng) {
@@ -465,6 +466,10 @@ export default function InteractiveLeafletMap({
         }
         if (userRadiusCircle) {
           userRadiusCircle.setLatLng(currentCadetCoords);
+        }
+        if (!hasCenteredInitial) {
+          map.setView(currentCadetCoords, 17.5);
+          hasCenteredInitial = true;
         }
       }
       if (typeof data.heading === 'number') {
@@ -678,7 +683,7 @@ export default function InteractiveLeafletMap({
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
-        source={{ html: staticHtml, baseUrl: 'https://cdnjs.cloudflare.com' }}
+        source={{ html: staticHtml }}
         style={styles.webView}
         userAgent="CampusQuest-CIT/1.0 (Android; Mobile)"
         javaScriptEnabled={true}

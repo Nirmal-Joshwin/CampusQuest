@@ -98,9 +98,7 @@ export default function WebARMainScreen() {
         (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
-          if (lat >= 11.0 && lat <= 11.1 && lng >= 77.0 && lng <= 77.1) {
-            setUserCoords({ latitude: lat, longitude: lng });
-          }
+          setUserCoords({ latitude: lat, longitude: lng });
         },
         () => {}
       );

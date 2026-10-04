@@ -178,18 +178,18 @@ export default function ARMainScreen() {
         }
 
         try {
-          const initialLoc = await Promise.race([
-            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
-          ]);
-          if (initialLoc) {
-            setLocation(initialLoc.coords);
-            loadGameData(initialLoc.coords);
+          const lastLoc = await Location.getLastKnownPositionAsync();
+          if (lastLoc) {
+            setLocation(lastLoc.coords);
+            loadGameData(lastLoc.coords);
           } else {
-            const lastLoc = await Location.getLastKnownPositionAsync();
-            if (lastLoc) {
-              setLocation(lastLoc.coords);
-              loadGameData(lastLoc.coords);
+            const initialLoc = await Promise.race([
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+            ]);
+            if (initialLoc) {
+              setLocation(initialLoc.coords);
+              loadGameData(initialLoc.coords);
             } else {
               const defaultCoords = {
                 latitude: CIT_CENTER.latitude,
@@ -220,7 +220,7 @@ export default function ARMainScreen() {
 
         let lastHeadingVal = 0;
         locationSubscription = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, timeInterval: 1200, distanceInterval: 1 },
+          { accuracy: Location.Accuracy.Balanced, timeInterval: 2000, distanceInterval: 0 },
           (newLocation) => {
             const raw = newLocation.coords;
             // Ignore inaccurate noise bursts (> 35m uncertainty) when an accurate position is already tracked
@@ -229,6 +229,7 @@ export default function ARMainScreen() {
             if (!smoothedCoordsRef.current) {
               smoothedCoordsRef.current = { latitude: raw.latitude, longitude: raw.longitude };
               setLocation(raw);
+              loadGameData(raw); // Reload data if we just got the first real location lock
             } else {
               const alpha = 0.25; // Smooth exponential moving average
               const smoothLat = smoothedCoordsRef.current.latitude + alpha * (raw.latitude - smoothedCoordsRef.current.latitude);

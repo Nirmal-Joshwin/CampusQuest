@@ -71,8 +71,8 @@ class CatchRequest(BaseModel):
     creature_name: str = Field(..., min_length=1, max_length=60)
     rarity: RarityTier
     campus_sector: Optional[str] = "CIT Campus"
-    latitude: float = Field(..., ge=11.0, le=11.1, description="GPS Latitude within Coimbatore region")
-    longitude: float = Field(..., ge=77.0, le=77.1, description="GPS Longitude within Coimbatore region")
+    latitude: float = Field(..., description="GPS Latitude")
+    longitude: float = Field(..., description="GPS Longitude")
 
 class CatchResponse(BaseModel):
     success: bool = True
