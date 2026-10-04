@@ -1042,6 +1042,3604 @@ flowchart TD
 
 ---
 
+
+## Source Code:
+
+### `backend/app/main.py`
+```python
+import logging
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
+from app.database import engine, Base
+from app.routers import spawns, auth, gameplay, shop, admin, multiplayer, friends, turf, pvp
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("CampusQuest")
+
+# Create database tables if supported
+try:
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database schema initialized successfully.")
+except Exception as e:
+    logger.warning(f"Could not automatically create database tables: {e}")
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    description="CampusQuest MVP Backend - Location-based campus exploration API for CIT",
+    version="1.0.0",
+)
+
+# Configure CORS safely for mobile app & web requests
+raw_origins = settings.ALLOWED_ORIGINS.split(",") if hasattr(settings, "ALLOWED_ORIGINS") and settings.ALLOWED_ORIGINS else []
+cors_origins = [o.strip() for o in raw_origins if o.strip()]
+
+if settings.ENVIRONMENT == "development":
+    allow_all = not cors_origins or "*" in cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"] if allow_all else cors_origins,
+        allow_credentials=False if allow_all else True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins or ["https://campusquest.cit.edu.in"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
+    )
+
+
+# Security headers & Request Timing Middleware
+@app.middleware("http")
+async def production_security_and_timing_middleware(request, call_next):
+    import time
+    start_time = time.time()
+    response = await call_next(request)
+    duration_ms = round((time.time() - start_time) * 1000, 2)
+    response.headers["X-Response-Time"] = f"{duration_ms}ms"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.ENVIRONMENT != "development":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+# Mount endpoints
+app.include_router(spawns.router)
+app.include_router(auth.router)
+app.include_router(gameplay.router)
+app.include_router(shop.router)
+app.include_router(admin.router)
+app.include_router(multiplayer.router)
+app.include_router(friends.router)
+app.include_router(turf.router)
+app.include_router(pvp.router)
+
+@app.get("/", tags=["Health"])
+def root():
+    return {
+        "status": "online",
+        "service": settings.APP_NAME,
+        "environment": settings.ENVIRONMENT,
+        "cit_geofence": {
+            "bounds": {
+                "min_lat": 11.0250,
+                "max_lat": 11.0300,
+                "min_lng": 77.0250,
+                "max_lng": 77.0300,
+            },
+            "location": "Coimbatore Institute of Technology (CIT)"
+        },
+        "docs_url": "/docs"
+    }
+
+@app.get("/health", tags=["Health"])
+def health_check():
+    """Liveness probe: verifies that the HTTP server process is running."""
+    return {"status": "healthy"}
+
+@app.get("/health/ready", tags=["Health"])
+def readiness_check():
+    """Readiness probe: verifies database connectivity and core services."""
+    from app.database import check_db_health
+    from fastapi.responses import JSONResponse
+    is_ready = check_db_health()
+    if is_ready:
+        return {"status": "ready", "database": "connected"}
+    return JSONResponse(
+        status_code=503,
+        content={"status": "degraded", "database": "disconnected"}
+    )
+
+
+
+```
+
+### `backend/app/routers/gameplay.py`
+```python
+import logging
+import uuid
+from typing import List, Dict
+from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.models import User, Capture
+from app.schemas import (
+    CatchRequest,
+    CatchResponse,
+    BestiaryResponse,
+    BestiaryEntry,
+    LootCrateResponse,
+    ClaimLootRequest,
+    ClaimLootResponse,
+)
+from app.auth import get_current_user
+from app.geofence import CIT_CANONICAL_STORY_SPAWNS, is_coordinate_within_cit_bounds
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/gameplay", tags=["Gameplay & Progression"])
+
+XP_MAP = {
+    "COMMON": 100,
+    "RARE": 250,
+    "EPIC": 600,
+    "LEGENDARY": 1500,
+}
+
+EMOJI_MAP = {
+    "HomeSentinel": "🛡️",
+    "CIT CyberDragon": "🐉",
+    "QuantumSprite": "✨",
+    "RoboGolem": "🤖",
+    "CircuitPhoenix": "🔥",
+    "CodePhantom": "👻",
+    "NeuralFox": "🦊",
+    "ByteFalcon": "🦅",
+    "SiliconTitan": "⚡",
+    "CampusOwl": "🦉",
+    "AeroMech": "🚀",
+}
+
+# Anti-farming / Tracking
+USER_LAST_LOCATION: Dict[str, dict] = {}             # user_id -> {"lat", "lng", "time"}
+
+# Fixed Campus Collectible Loot Caches
+CANONICAL_CAMPUS_LOOT = [
+    {
+        "id": "cit-loot-1",
+        "name": "CIT Canteen Supply Crate",
+        "reward_type": "ENERGY",
+        "reward_amount": 50,
+        "campus_sector": "Student Canteen & Food Court",
+        "latitude": 11.026950,
+        "longitude": 77.027750,
+        "is_active": True,
+    },
+    {
+        "id": "cit-loot-2",
+        "name": "Library Quantum Data Crystal",
+        "reward_type": "COINS",
+        "reward_amount": 100,
+        "campus_sector": "Central Library",
+        "latitude": 11.028150,
+        "longitude": 77.026850,
+        "is_active": True,
+    },
+    {
+        "id": "cit-loot-3",
+        "name": "Sports Pavilion Energy Battery",
+        "reward_type": "ENERGY",
+        "reward_amount": 40,
+        "campus_sector": "Southern Sports Pavilion",
+        "latitude": 11.026350,
+        "longitude": 77.027150,
+        "is_active": True,
+    },
+]
+
+@router.post("/catch", response_model=CatchResponse)
+def record_capture(
+    payload: CatchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Record a creature capture, deduct energy, award XP, and check for Level-Up.
+    """
+    if current_user.energy < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Insufficient energy! You need at least 10 Energy to capture. Collect energy crates on campus to recharge."
+        )
+
+    # Anti-spoofing verification: ensure capture coordinates are within CIT Campus perimeter
+    # HomeSentinel is permitted for field calibration and remote home testing
+    if payload.creature_name != "HomeSentinel" and not is_coordinate_within_cit_bounds(payload.latitude, payload.longitude):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GPS coordinates rejected: Anomaly capture requires physical presence within the CIT Campus perimeter."
+        )
+
+    # SEC-HIGH-04 Fix: Server-side validation of spawn existence and proximity
+    import math
+    def get_distance_meters(lat1, lon1, lat2, lon2):
+        R = 6371000
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi, dlam = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    # Retrieve valid spawns, injecting HomeSentinel at user's location to allow testing
+    from app.geofence import get_cit_story_spawns
+    valid_spawns = get_cit_story_spawns(user_lat=payload.latitude, user_lng=payload.longitude)
+    target_spawn = next((s for s in valid_spawns if s["name"] == payload.creature_name), None)
+    
+    if not target_spawn:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Validation failed: Creature '{payload.creature_name}' does not exist on campus."
+        )
+    
+    dist = get_distance_meters(payload.latitude, payload.longitude, target_spawn["latitude"], target_spawn["longitude"])
+    # 35m + 15m GPS drift tolerance
+    if dist > 50:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Validation failed: You are {int(dist)}m away. Radar limit is 35m."
+        )
+
+    # Enforce unique one-time creature capture (no farming)
+    already_captured = db.query(Capture).filter(
+        Capture.user_id == current_user.id,
+        Capture.creature_name == payload.creature_name
+    ).first()
+    if already_captured:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{payload.creature_name} is already registered in your Bestiary! Campus anomalies cannot be farmed repeatedly."
+        )
+
+    # Teleportation / Speed Check (Max ~15m/s = ~54km/h = car speed in campus)
+    now = datetime.now(timezone.utc)
+    user_loc = USER_LAST_LOCATION.get(current_user.id)
+    if user_loc:
+        time_elapsed = (now - user_loc["time"]).total_seconds()
+        if time_elapsed > 0:
+            travel_dist = get_distance_meters(payload.latitude, payload.longitude, user_loc["lat"], user_loc["lng"])
+            speed = travel_dist / time_elapsed
+            if speed > 15: # > 15 m/s
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Movement speed too high. Please slow down. (Anti-Spoofing Lock)"
+                )
+    
+    USER_LAST_LOCATION[current_user.id] = {"lat": payload.latitude, "lng": payload.longitude, "time": now}
+
+    rarity_str = payload.rarity.value if hasattr(payload.rarity, "value") else str(payload.rarity)
+    xp_earned = XP_MAP.get(rarity_str.upper(), 100)
+
+    # 1. Update user energy & XP
+    current_user.energy = max(0, current_user.energy - 10)
+    current_user.xp += xp_earned
+    
+    old_level = current_user.level
+    new_level = 1 + (current_user.xp // 1000)
+    level_up = new_level > old_level
+    current_user.level = new_level
+
+    # 2. Record capture in database
+    capture = Capture(
+        id=str(uuid.uuid4()),
+        user_id=current_user.id,
+        creature_name=payload.creature_name,
+        rarity=rarity_str.upper(),
+        campus_sector=payload.campus_sector or "CIT Campus",
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        xp_earned=xp_earned,
+    )
+
+    try:
+        db.add(capture)
+        db.commit()
+        db.refresh(current_user)
+    except Exception as e:
+        logger.error(f"Failed to record capture: {e}")
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error recording capture")
+
+    message = f"Successfully captured {payload.creature_name}! +{xp_earned} XP earned."
+    if level_up:
+        message += f" 🎉 LEVEL UP! You reached Level {new_level}!"
+
+    return CatchResponse(
+        success=True,
+        message=message,
+        xp_gained=xp_earned,
+        level_up=level_up,
+        new_level=new_level,
+        new_xp=current_user.xp,
+        current_energy=current_user.energy,
+        capture_id=capture.id,
+    )
+
+@router.get("/bestiary", response_model=BestiaryResponse)
+def get_bestiary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns player's CIT Campus Bestiary (Pokedex).
+    Lists all 10 canonical creatures indicating discovered status and capture count.
+    """
+    user_captures = db.query(Capture).filter(Capture.user_id == current_user.id).all()
+    capture_map = {}
+    for c in user_captures:
+        if c.creature_name not in capture_map:
+            capture_map[c.creature_name] = {"count": 0, "first_caught": c.captured_at}
+        capture_map[c.creature_name]["count"] += 1
+
+    entries: List[BestiaryEntry] = []
+    discovered_count = 0
+
+    for creature in CIT_CANONICAL_STORY_SPAWNS:
+        name = creature["name"]
+        rarity = creature["rarity"]
+        sector = creature["sector"]
+        is_discovered = name in capture_map
+        if is_discovered:
+            discovered_count += 1
+
+        entries.append(
+            BestiaryEntry(
+                creature_name=name,
+                rarity=rarity,
+                sector=sector,
+                discovered=is_discovered,
+                captured_count=capture_map[name]["count"] if is_discovered else 0,
+                first_caught_at=capture_map[name]["first_caught"] if is_discovered else None,
+                emoji=EMOJI_MAP.get(name, "👾"),
+                xp_reward=XP_MAP.get(rarity, 100),
+            )
+        )
+
+    return BestiaryResponse(
+        total_discovered=discovered_count,
+        total_creatures=len(CIT_CANONICAL_STORY_SPAWNS),
+        entries=entries,
+    )
+
+@router.get("/loot", response_model=List[LootCrateResponse])
+def get_campus_loot():
+    """
+    Returns active collectible loot caches and energy cells scattered across CIT.
+    """
+    return CANONICAL_CAMPUS_LOOT
+
+# Anti-farming In-Memory Tracking
+USER_LOOT_CLAIMS: Dict[str, Dict[str, datetime]] = {} # user_id -> {crate_id: claim_timestamp}
+USER_QR_LAST_SCAN: Dict[str, datetime] = {}          # user_id -> last_scan_timestamp
+
+LOOT_COOLDOWN_HOURS = 4
+QR_SCAN_COOLDOWN_SECONDS = 300 # 5 minutes
+
+@router.post("/claim-loot", response_model=ClaimLootResponse)
+def claim_loot_cache(
+    payload: ClaimLootRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Claims a collectible campus loot cache reward (Energy, Coins, or XP).
+    Enforces a 4-hour cooldown per user per crate to prevent infinite farming.
+    """
+    crate = next((c for c in CANONICAL_CAMPUS_LOOT if c["id"] == payload.crate_id), None)
+    if not crate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Loot crate not found")
+
+    now = datetime.now(timezone.utc)
+    user_claims = USER_LOOT_CLAIMS.setdefault(current_user.id, {})
+    if payload.crate_id in user_claims:
+        last_claimed = user_claims[payload.crate_id]
+        elapsed = (now - last_claimed).total_seconds()
+        cooldown_total = LOOT_COOLDOWN_HOURS * 3600
+        if elapsed < cooldown_total:
+            remaining_mins = max(1, int((cooldown_total - elapsed) // 60))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Supply cache already secured! Scanner recharging. Return in {remaining_mins} minutes."
+            )
+
+    reward_type = crate["reward_type"]
+    reward_amount = crate["reward_amount"]
+
+    if reward_type == "ENERGY":
+        current_user.energy = min(current_user.max_energy, current_user.energy + reward_amount)
+    elif reward_type == "COINS":
+        current_user.coins += reward_amount
+    elif reward_type == "XP":
+        current_user.xp += reward_amount
+        current_user.level = 1 + (current_user.xp // 1000)
+
+    try:
+        db.commit()
+        db.refresh(current_user)
+        user_claims[payload.crate_id] = now
+    except Exception as e:
+        logger.error(f"Failed to claim loot: {e}")
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database update failed")
+
+    return ClaimLootResponse(
+        success=True,
+        reward_type=reward_type,
+        reward_amount=reward_amount,
+        message=f"Claimed {reward_amount} {reward_type} from {crate['name']}!",
+        new_energy=current_user.energy,
+        new_coins=current_user.coins,
+        new_xp=current_user.xp,
+    )
+
+class QrScanRequest(BaseModel):
+    qr_code: str = Field(..., min_length=3, max_length=100)
+
+VALID_QR_PREFIXES = ("CIT-", "CITQUEST-", "CAMPUS-", "STATION-")
+
+@router.post("/qr-scan")
+def scan_campus_qr(
+    payload: QrScanRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Validates physical QR codes on campus bulletin boards and awards secret supply caches.
+    Validates format and enforces rate limiting to prevent spamming.
+    """
+    code = payload.qr_code.strip()
+    
+    # 1. Signature check
+    code_upper = code.upper()
+    if not any(code_upper.startswith(prefix) for prefix in VALID_QR_PREFIXES):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid QR beacon signature. Scan an authorized CIT CampusQuest station marker."
+        )
+
+    # 2. Rate limiting check (5-minute cooldown)
+    now = datetime.now(timezone.utc)
+    if current_user.id in USER_QR_LAST_SCAN:
+        last_scan = USER_QR_LAST_SCAN[current_user.id]
+        elapsed = (now - last_scan).total_seconds()
+        if elapsed < QR_SCAN_COOLDOWN_SECONDS:
+            remaining_secs = int(QR_SCAN_COOLDOWN_SECONDS - elapsed)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Quantum scanner cooling down! Please wait {remaining_secs} seconds before decrypting another QR station."
+            )
+
+    # Award scavenger loot
+    bonus_coins = 50
+    bonus_energy = 30
+    bonus_xp = 200
+
+    current_user.coins += bonus_coins
+    current_user.energy = min(current_user.max_energy, current_user.energy + bonus_energy)
+    current_user.xp += bonus_xp
+    current_user.level = 1 + (current_user.xp // 1000)
+
+    try:
+        db.commit()
+        USER_QR_LAST_SCAN[current_user.id] = now
+    except Exception as e:
+        logger.error(f"Failed to commit QR reward: {e}")
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Reward recording error")
+
+    return {
+        "success": True,
+        "message": f"📷 Physical Campus QR Station Verified!\nStation Code: {code[:15]}...\n+50 Data Credits (💎)\n+30 Quantum Energy\n+200 Exploration XP",
+        "reward_coins": bonus_coins,
+        "reward_energy": bonus_energy,
+        "reward_xp": bonus_xp,
+        "new_coins": current_user.coins,
+        "new_energy": current_user.energy,
+        "new_xp": current_user.xp
+    }
+
+
+
+
+```
+
+### `frontend/app/index.tsx`
+```tsx
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Dimensions,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Location from 'expo-location';
+import { Accelerometer } from 'expo-sensors';
+import { useRouter, useFocusEffect } from 'expo-router';
+import {
+  calculateDistancesToSpawns,
+  calculateHaversineDistance,
+  calculateBearing,
+  calculateRelativeAngle,
+  calculateARProjection,
+  formatDistance,
+  getRarityConfig,
+  getCreatureEmoji,
+  SpawnPoint,
+  SpawnWithDistance,
+} from '../utils/haversine';
+import {
+  fetchSpawns,
+  fetchLootCratesApi,
+  claimLootCrateApi,
+  fetchBestiary,
+  LootCrateItem,
+} from '../utils/api';
+import { fetchActivePeersApi, PeerCadet } from '../utils/multiplayer';
+import { fetchFriendsApi, FriendItem } from '../utils/friends';
+import { fetchStrongholdsApi, CampusStronghold } from '../utils/turf';
+import DuelModal from '../components/DuelModal';
+import StrongholdModal from '../components/StrongholdModal';
+import InteractiveLeafletMap from '../components/InteractiveLeafletMap';
+import { useAuth } from '../context/AuthContext';
+import { useVPSTracker } from '../utils/vps';
+import { triggerHapticTap, triggerHapticImpact, triggerHapticSuccess, triggerHapticWarning } from '../utils/haptics';
+import { playTapSound, playSwooshSound, playCoinSound } from '../utils/sound';
+
+const CIT_CENTER = {
+  latitude: 11.0272,
+  longitude: 77.0274,
+};
+
+const CATCH_PROXIMITY_THRESHOLD_METERS = 35;
+
+export default function ARMainScreen() {
+  const router = useRouter();
+  const { user, token, updateProfile } = useAuth();
+  const smoothedCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+
+  // Primary View Mode: MAP (OpenStreetMap) vs AR (Camera Viewport)
+  const [activeView, setActiveView] = useState<'MAP' | 'AR'>('MAP');
+
+  const [location, setLocation] = useState<Location.LocationObjectCoords | null>(null);
+  const [heading, setHeading] = useState<number>(0);
+  const [devicePitch, setDevicePitch] = useState<number>(0);
+
+  // VPS Tracker
+  const {
+    anchor: vpsAnchor,
+    projection: vpsProjection,
+    mode: trackingMode,
+    setMode: setTrackingMode,
+    lockAnchorInFront,
+    anchorToBearing,
+  } = useVPSTracker({ defaultDepthMeters: 2.5, externalHeading: heading });
+
+  // Camera Focus
+  const [isFocused, setIsFocused] = useState<boolean>(true);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => {
+        setIsFocused(false);
+      };
+    }, [])
+  );
+
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+
+  const [spawns, setSpawns] = useState<SpawnPoint[]>([]);
+  const [sortedSpawns, setSortedSpawns] = useState<SpawnWithDistance[]>([]);
+  const [lootCrates, setLootCrates] = useState<LootCrateItem[]>([]);
+  const [friends, setFriends] = useState<FriendItem[]>([]);
+  const [peers, setPeers] = useState<PeerCadet[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  const [strongholds, setStrongholds] = useState<CampusStronghold[]>([]);
+  const [selectedStronghold, setSelectedStronghold] = useState<CampusStronghold | null>(null);
+  const [showStrongholdModal, setShowStrongholdModal] = useState<boolean>(false);
+
+  const [duelTarget, setDuelTarget] = useState<FriendItem | null>(null);
+  const [showDuelModal, setShowDuelModal] = useState<boolean>(false);
+
+  const currentCoords = location
+    ? { latitude: location.latitude, longitude: location.longitude }
+    : { latitude: CIT_CENTER.latitude, longitude: CIT_CENTER.longitude };
+
+  const activeSpawns: SpawnWithDistance[] =
+    sortedSpawns.length > 0
+      ? sortedSpawns
+      : spawns.map((s) => ({
+          ...s,
+          distanceMeters: location
+            ? calculateHaversineDistance(
+                { latitude: location.latitude, longitude: location.longitude },
+                { latitude: s.latitude, longitude: s.longitude }
+              )
+            : 999,
+          isWithinCatchRange: false,
+        }));
+
+  const closestSpawn = activeSpawns.length > 0 ? activeSpawns[0] : null;
+
+  // Load Game Data
+  const loadGameData = async (userCoords?: { latitude: number; longitude: number } | null) => {
+    try {
+      const activeCoords = userCoords || (location ? { latitude: location.latitude, longitude: location.longitude } : null);
+      const [spawnData, lootData, bestiaryData, peersData, friendsData, strongholdsData] = await Promise.all([
+        fetchSpawns(12, activeCoords),
+        fetchLootCratesApi(),
+        fetchBestiary(token),
+        fetchActivePeersApi(),
+        fetchFriendsApi(token),
+        fetchStrongholdsApi(),
+      ]);
+
+      const capturedNames = new Set(
+        bestiaryData.entries.filter((e) => e.discovered).map((e) => e.creature_name)
+      );
+
+      // HomeSentinel indoor testing anchor
+      const processedSpawns = spawnData.map((s) => {
+        if (s.name === 'HomeSentinel' && activeCoords) {
+          return {
+            ...s,
+            latitude: Number((activeCoords.latitude + 0.00006).toFixed(6)),
+            longitude: Number((activeCoords.longitude + 0.00005).toFixed(6)),
+          };
+        }
+        return s;
+      });
+
+      const uncollectedSpawns = processedSpawns.filter((s) => !capturedNames.has(s.name));
+
+      setSpawns(uncollectedSpawns);
+      setLootCrates(lootData);
+      setPeers(peersData);
+      setFriends(friendsData);
+      setStrongholds(strongholdsData);
+    } catch (err) {
+      console.error('Error loading game data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // GPS & Heading Listeners
+  useEffect(() => {
+    let locationSubscription: Location.LocationSubscription | null = null;
+    let headingSubscription: Location.LocationSubscription | null = null;
+
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setLoading(false);
+          loadGameData(CIT_CENTER);
+          return;
+        }
+
+        try {
+          const lastLoc = await Location.getLastKnownPositionAsync();
+          if (lastLoc) {
+            setLocation(lastLoc.coords);
+            loadGameData(lastLoc.coords);
+          } else {
+            const initialLoc = await Promise.race([
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+            ]);
+            if (initialLoc) {
+              setLocation(initialLoc.coords);
+              loadGameData(initialLoc.coords);
+            } else {
+              const defaultCoords = {
+                latitude: CIT_CENTER.latitude,
+                longitude: CIT_CENTER.longitude,
+                altitude: null,
+                accuracy: 5,
+                altitudeAccuracy: null,
+                heading: null,
+                speed: null,
+              };
+              setLocation(defaultCoords);
+              loadGameData(defaultCoords);
+            }
+          }
+        } catch (e) {
+          const defaultCoords = {
+            latitude: CIT_CENTER.latitude,
+            longitude: CIT_CENTER.longitude,
+            altitude: null,
+            accuracy: 5,
+            altitudeAccuracy: null,
+            heading: null,
+            speed: null,
+          };
+          setLocation(defaultCoords);
+          loadGameData(defaultCoords);
+        }
+
+        let lastHeadingVal = 0;
+        locationSubscription = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.Balanced, timeInterval: 2000, distanceInterval: 0 },
+          (newLocation) => {
+            const raw = newLocation.coords;
+            // Ignore inaccurate noise bursts (> 35m uncertainty) when an accurate position is already tracked
+            if (raw.accuracy && raw.accuracy > 35 && smoothedCoordsRef.current) return;
+
+            if (!smoothedCoordsRef.current) {
+              smoothedCoordsRef.current = { latitude: raw.latitude, longitude: raw.longitude };
+              setLocation(raw);
+              loadGameData(raw); // Reload data if we just got the first real location lock
+            } else {
+              const alpha = 0.25; // Smooth exponential moving average
+              const smoothLat = smoothedCoordsRef.current.latitude + alpha * (raw.latitude - smoothedCoordsRef.current.latitude);
+              const smoothLng = smoothedCoordsRef.current.longitude + alpha * (raw.longitude - smoothedCoordsRef.current.longitude);
+              smoothedCoordsRef.current = { latitude: smoothLat, longitude: smoothLng };
+              setLocation({
+                ...raw,
+                latitude: Number(smoothLat.toFixed(6)),
+                longitude: Number(smoothLng.toFixed(6)),
+              });
+            }
+          }
+        );
+
+        headingSubscription = await Location.watchHeadingAsync((headingData) => {
+          const val = headingData.trueHeading >= 0 ? headingData.trueHeading : headingData.magHeading;
+          if (val >= 0) {
+            let diff = val - lastHeadingVal;
+            while (diff < -180) diff += 360;
+            while (diff > 180) diff -= 360;
+            // Deadband filter: ignore microscopic jitter < 1.2 deg
+            if (Math.abs(diff) > 1.2) {
+              const smoothed = (lastHeadingVal + diff * 0.22 + 360) % 360;
+              lastHeadingVal = smoothed;
+              setHeading(smoothed);
+            }
+          }
+        });
+      } catch (e) {
+        console.warn('GPS setup error:', e);
+        loadGameData(CIT_CENTER);
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      if (locationSubscription) locationSubscription.remove();
+      if (headingSubscription) headingSubscription.remove();
+    };
+  }, []);
+
+  // Device Pitch (Tilt) Listener for AR Perspective
+  useEffect(() => {
+    let accelSub: any = null;
+    (async () => {
+      const avail = await Accelerometer.isAvailableAsync().catch(() => false);
+      if (avail) {
+        Accelerometer.setUpdateInterval(32);
+        accelSub = Accelerometer.addListener((data) => {
+          // In portrait: positive = tilted down towards ground, negative = tilted up towards sky
+          const pitchRad = Math.atan2(data.z, -data.y);
+          const pitchDeg = Math.round((pitchRad * 180) / Math.PI);
+          setDevicePitch(pitchDeg);
+        });
+      }
+    })();
+    return () => {
+      if (accelSub) accelSub.remove();
+    };
+  }, []);
+
+  // Auto-sync VPS anchor with closest target when in VPS mode and viewing AR
+  useEffect(() => {
+    if (closestSpawn && trackingMode === 'VPS' && activeView === 'AR') {
+      const bearing = calculateBearing(currentCoords, {
+        latitude: closestSpawn.latitude,
+        longitude: closestSpawn.longitude,
+      });
+      anchorToBearing(bearing, Math.max(2.5, Math.min(15, closestSpawn.distanceMeters)));
+    }
+  }, [closestSpawn?.id, trackingMode, activeView, anchorToBearing]);
+
+  // Update distance sorting
+  useEffect(() => {
+    if (location && spawns.length > 0) {
+      const computed = calculateDistancesToSpawns(
+        { latitude: location.latitude, longitude: location.longitude },
+        spawns
+      );
+      setSortedSpawns(computed);
+    }
+  }, [location, spawns]);
+
+  // Handle Encounter - Strictly Enforces Radar Distance
+  const handleTriggerCatch = (spawnToCatch: SpawnWithDistance | SpawnPoint) => {
+    const dist = (spawnToCatch as SpawnWithDistance).distanceMeters ||
+      calculateHaversineDistance(currentCoords, { latitude: spawnToCatch.latitude, longitude: spawnToCatch.longitude });
+
+    if (dist > CATCH_PROXIMITY_THRESHOLD_METERS) {
+      triggerHapticWarning();
+      Alert.alert(
+        '📡 Target Outside Radar',
+        `${spawnToCatch.name} is ${formatDistance(dist)} away.\n\nRadar Catch Distance is 35m. Walk within radar range to engage in AR!`,
+        [{ text: 'Understood' }]
+      );
+      return;
+    }
+
+    triggerHapticImpact('heavy');
+    playSwooshSound();
+    router.push({
+      pathname: '/catch',
+      params: {
+        id: spawnToCatch.id,
+        name: spawnToCatch.name,
+        rarity: spawnToCatch.rarity || 'COMMON',
+        distance: Math.round(dist).toString(),
+        creature_lat: spawnToCatch.latitude.toString(),
+        creature_lng: spawnToCatch.longitude.toString(),
+        user_lat: currentCoords.latitude.toString(),
+        user_lng: currentCoords.longitude.toString(),
+      },
+    });
+  };
+
+  // Handle Loot Crate Claim
+  const handleClaimLoot = async (crate: LootCrateItem) => {
+    const dist = location
+      ? calculateHaversineDistance(
+          { latitude: location.latitude, longitude: location.longitude },
+          { latitude: crate.latitude, longitude: crate.longitude }
+        )
+      : 999;
+
+    if (dist > CATCH_PROXIMITY_THRESHOLD_METERS) {
+      triggerHapticWarning();
+      Alert.alert(
+        `🧰 ${crate.name}`,
+        `Sector: ${crate.campus_sector}\nWalk within 25m to unlock! (Currently ${formatDistance(dist)})`
+      );
+      return;
+    }
+
+    try {
+      const res = await claimLootCrateApi(crate.id, token);
+      if (user) updateProfile({});
+      triggerHapticSuccess();
+      playCoinSound();
+      Alert.alert('🎁 Cache Unlocked!', `${res.message}`);
+      loadGameData();
+    } catch (e) {
+      triggerHapticSuccess();
+      playCoinSound();
+      Alert.alert('🎁 Cache Collected!', `Claimed ${crate.reward_amount} ${crate.reward_type}!`);
+      loadGameData();
+    }
+  };
+
+  // 1-Tap Indoor Test Anchor - Generates at random bearing within 25m Radar Boundary
+  const handleAnchorHomeTarget = () => {
+    const coords = location || CIT_CENTER;
+    triggerHapticImpact('medium');
+    playTapSound();
+
+    // Spawns within radar range (8-12m away, offset by 25° to 55° from heading)
+    const randomOffsetDeg = (Math.random() > 0.5 ? 1 : -1) * (25 + Math.random() * 30);
+    const radHeading = ((heading + randomOffsetDeg) * Math.PI) / 180;
+    const distanceMeters = 8 + Math.random() * 4; // 8m - 12m (within 25m radar!)
+    const distanceOffsetKm = (distanceMeters / 1000) / 6371;
+
+    const targetLat = coords.latitude + (distanceOffsetKm * Math.cos(radHeading) * 180) / Math.PI;
+    const targetLng =
+      coords.longitude +
+      (distanceOffsetKm * Math.sin(radHeading) * 180) /
+        (Math.PI * Math.cos((coords.latitude * Math.PI) / 180));
+
+    const homeSentinel: SpawnPoint = {
+      id: 'home-sentinel-test',
+      name: 'HomeSentinel',
+      rarity: 'EPIC',
+      latitude: Number(targetLat.toFixed(6)),
+      longitude: Number(targetLng.toFixed(6)),
+    };
+
+    setSpawns((prev) => [homeSentinel, ...prev.filter((s) => s.name !== 'HomeSentinel')]);
+
+    Alert.alert(
+      '🎯 Indoor Target Synced!',
+      `HomeSentinel (Epic Anomaly) generated ${Math.round(distanceMeters)}m away in your radar! Turn toward it to capture in AR.`
+    );
+  };
+
+  // AR Projection for Spawns
+  const arSpawns = activeSpawns.map((s) => {
+    if (
+      trackingMode === 'VPS' &&
+      vpsAnchor &&
+      closestSpawn &&
+      s.id === closestSpawn.id &&
+      s.distanceMeters <= CATCH_PROXIMITY_THRESHOLD_METERS
+    ) {
+      return {
+        ...s,
+        ar: {
+          inView: vpsProjection.inView,
+          screenXPercent: vpsProjection.screenXPercent,
+          screenYPercent: vpsProjection.screenYPercent,
+          scale: vpsProjection.scale,
+          distanceMeters: s.distanceMeters,
+          direction: (vpsProjection.offScreenDirection === 'none'
+            ? 'in_front'
+            : vpsProjection.offScreenDirection) as any,
+          relativeAngle: vpsProjection.angularDistanceDeg,
+        },
+      };
+    }
+    return {
+      ...s,
+      ar: calculateARProjection(
+        currentCoords,
+        { latitude: s.latitude, longitude: s.longitude },
+        heading,
+        devicePitch
+      ),
+    };
+  });
+
+  const visibleProximitySpawns = arSpawns
+    .filter((item) => item.ar.inView && item.distanceMeters <= 35)
+    .sort((a, b) => a.distanceMeters - b.distanceMeters)
+    .slice(0, 1);
+
+  // Proximity Target Off-Screen Direction Guide
+  const closestTargetProjection = arSpawns.find(
+    (item) => closestSpawn && item.id === closestSpawn.id && item.distanceMeters <= 35
+  );
+  const isClosestOffScreen = closestTargetProjection && !closestTargetProjection.ar.inView;
+
+  // Directional guidance for nearest target in AR
+  const closestAngle = closestSpawn
+    ? calculateRelativeAngle(
+        calculateBearing(currentCoords, { latitude: closestSpawn.latitude, longitude: closestSpawn.longitude }),
+        heading
+      )
+    : 0;
+
+  let turnHint = 'Ahead';
+  let turnArrow = '⬆️';
+  if (closestAngle < -45 && closestAngle >= -135) {
+    turnHint = 'Turn Left';
+    turnArrow = '⬅️';
+  } else if (closestAngle > 45 && closestAngle <= 135) {
+    turnHint = 'Turn Right';
+    turnArrow = '➡️';
+  } else if (Math.abs(closestAngle) > 135) {
+    turnHint = 'Turn Around';
+    turnArrow = '⬇️';
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#38BDF8" />
+        <Text style={styles.loadingText}>Syncing OpenStreetMap & CIT Satellites...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {/* ------------------------------------------------------------------ */}
+      {/* VIEWPORT LAYER: OPENSTREETMAP (Full Screen) OR AR CAMERA VIEWPORT  */}
+      {/* ------------------------------------------------------------------ */}
+      {activeView === 'MAP' ? (
+        <View style={StyleSheet.absoluteFill}>
+          <InteractiveLeafletMap
+            center={currentCoords}
+            userLocation={location ? currentCoords : null}
+            heading={heading}
+            spawns={activeSpawns}
+            lootCrates={lootCrates}
+            strongholds={strongholds}
+            peers={peers}
+            friends={friends}
+            onSelectSpawn={(spawn) => {
+              handleTriggerCatch(spawn);
+            }}
+            onSelectLoot={(crate) => {
+              handleClaimLoot(crate);
+            }}
+            onSelectStronghold={(sh) => {
+              setSelectedStronghold(sh);
+              setShowStrongholdModal(true);
+            }}
+            onSelectPeer={(peer) => {
+              setDuelTarget({
+                id: (peer as any).user_id || (peer as any).id,
+                friend_id: (peer as any).user_id || (peer as any).id,
+                username: peer.username,
+                department: peer.department,
+                level: peer.level,
+                avatar_title: (peer as any).avatar_title || 'Cadet',
+                status: 'ACCEPTED',
+                is_online: true,
+                campus_sector: 'CIT Campus Quad',
+                latitude: peer.latitude || CIT_CENTER.latitude,
+                longitude: peer.longitude || CIT_CENTER.longitude,
+              });
+              setShowDuelModal(true);
+            }}
+          />
+        </View>
+      ) : (
+        /* AR CAMERA VIEWPORT */
+        <View style={StyleSheet.absoluteFill}>
+          {isFocused && cameraPermission?.granted ? (
+            <CameraView style={StyleSheet.absoluteFill} facing="back" />
+          ) : (
+            <View style={styles.simulatedCameraBg}>
+              <Text style={styles.simulatedCameraText}>⚡ CYBER AR OPTICAL SENSOR</Text>
+              {!cameraPermission?.granted && (
+                <TouchableOpacity style={styles.inlineEnableBtn} onPress={requestCameraPermission}>
+                  <Text style={styles.inlineEnableBtnText}>📷 Grant Camera Access</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* AR Holographic Reticle */}
+          <View style={styles.centerReticleWrapper} pointerEvents="none">
+            <View style={styles.reticleCrosshairH} />
+            <View style={styles.reticleCrosshairV} />
+            <View style={styles.reticleRing} />
+          </View>
+
+          {/* Proximity AR Anomaly Node (Interactive Hologram in Room / Field) */}
+          <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+            {visibleProximitySpawns.map((spawn) => {
+              const isNearby = spawn.distanceMeters <= CATCH_PROXIMITY_THRESHOLD_METERS;
+              const rConfig = getRarityConfig(spawn.rarity);
+              const emoji = getCreatureEmoji(spawn.name);
+
+              return (
+                <TouchableOpacity
+                  key={spawn.id}
+                  style={[
+                    styles.arNodeCard,
+                    {
+                      left: `${spawn.ar.screenXPercent}%`,
+                      top: `${spawn.ar.screenYPercent}%`,
+                      transform: [
+                        { translateX: -80 },
+                        { translateY: -22 },
+                        { scale: spawn.ar.scale },
+                      ],
+                      borderColor: isNearby ? '#22C55E' : rConfig.borderColor,
+                    },
+                  ]}
+                  activeOpacity={0.85}
+                  onPress={() => handleTriggerCatch(spawn)}
+                >
+                  <View style={[styles.arNodeGlow, { backgroundColor: rConfig.bgColor }]}>
+                    <Text style={styles.arNodeEmoji}>{emoji}</Text>
+                  </View>
+                  <View style={styles.arNodeBadge}>
+                    <Text style={styles.arNodeName}>{spawn.name}</Text>
+                    <Text style={[styles.arNodeDist, isNearby && styles.arNodeDistNearby]}>
+                      {formatDistance(spawn.distanceMeters)} • {isNearby ? '⚡ CATCH NOW!' : 'Approach Target'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Off-screen direction guide arrow if nearest target is not currently in lens view */}
+            {isClosestOffScreen && closestTargetProjection && (
+              <View
+                style={[
+                  styles.arEdgeGuide,
+                  closestTargetProjection.ar.relativeAngle < 0 ? styles.arEdgeGuideLeft : styles.arEdgeGuideRight,
+                ]}
+                pointerEvents="none"
+              >
+                <Text style={styles.arEdgeGuideText}>
+                  {closestTargetProjection.ar.relativeAngle < 0
+                    ? `◀ TURN LEFT (${Math.abs(closestTargetProjection.ar.relativeAngle)}°)`
+                    : `TURN RIGHT (${Math.abs(closestTargetProjection.ar.relativeAngle)}°) ▶`}
+                </Text>
+                <Text style={styles.arEdgeGuideSub}>
+                  {closestSpawn?.name} ({formatDistance(closestSpawn?.distanceMeters || 0)})
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* TOP GAMIFIED HUD: PLAYER LEVEL, HP, VPS BADGE, AND QUICK ACTIONS  */}
+      {/* ------------------------------------------------------------------ */}
+      <SafeAreaView style={styles.topHudContainer} pointerEvents="box-none">
+        <View style={styles.topHudBar}>
+          {/* Cadet Profile & Energy Status */}
+          <TouchableOpacity
+            style={styles.playerBadge}
+            activeOpacity={0.85}
+            onPress={() => (user ? router.push('/profile') : router.push('/login'))}
+          >
+            <Text style={styles.playerAvatarIcon}>{user?.role === 'ADMIN' ? '🛡️' : '👨‍💻'}</Text>
+            <View>
+              <Text style={styles.playerNameText} numberOfLines={1}>
+                {user?.username || 'CIT Cadet'}
+              </Text>
+              <Text style={styles.playerLevelText}>LVL {user?.level || 1} • {user?.department || 'CSE'}</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Quick HUD Metrics */}
+          <View style={styles.hudPillsCluster}>
+            <View style={styles.energyPill}>
+              <Text style={styles.energyPillText}>⚡ {user?.energy || 100} HP</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.coinsPill}
+              onPress={() => router.push('/shop')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.coinsPillText}>💎 {user?.coins || 0}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Action Cluster (Recenter / Bag / Shop) */}
+          <View style={styles.topIconsCluster}>
+            <TouchableOpacity
+              style={[styles.iconBtn, { backgroundColor: '#0284C7' }]}
+              onPress={handleAnchorHomeTarget}
+            >
+              <Text style={styles.iconBtnText}>🎯</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/inventory')}>
+              <Text style={styles.iconBtnText}>🎒</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/shop')}>
+              <Text style={styles.iconBtnText}>🏪</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/friends')}>
+              <Text style={styles.iconBtnText}>👥</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Dynamic Nearest Target Guidance Strip (in AR mode) */}
+        {activeView === 'AR' && closestSpawn && (
+          <View style={styles.targetBanner}>
+            <Text style={styles.targetBannerText}>
+              📡 Nearest: <Text style={{ color: '#38BDF8', fontWeight: 'bold' }}>{closestSpawn.name}</Text> ({formatDistance(closestSpawn.distanceMeters)}) • {turnArrow} {turnHint}
+            </Text>
+          </View>
+        )}
+      </SafeAreaView>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* BOTTOM GAMIFIED SWITCHER: [ 🗺️ CAMPUS MAP ] <---> [ 📷 AR CAMERA ] */}
+      {/* ------------------------------------------------------------------ */}
+      <SafeAreaView style={styles.bottomHudContainer} pointerEvents="box-none">
+        {/* Radar In-Range Proximity Anomaly Engagement Banner */}
+        {closestSpawn && closestSpawn.distanceMeters <= CATCH_PROXIMITY_THRESHOLD_METERS && (
+          <TouchableOpacity
+            style={styles.engageProminentBtn}
+            activeOpacity={0.85}
+            onPress={() => handleTriggerCatch(closestSpawn)}
+          >
+            <Text style={styles.engageProminentIcon}>⚡</Text>
+            <Text style={styles.engageProminentText}>
+              RADAR ENGAGE: {closestSpawn.name.toUpperCase()} ({formatDistance(closestSpawn.distanceMeters)}) ➔
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Gamified View Switcher Pill */}
+        <View style={styles.navSwitcherPill}>
+          <TouchableOpacity
+            style={[styles.navSegment, activeView === 'MAP' && styles.navSegmentActive]}
+            activeOpacity={0.8}
+            onPress={() => {
+              triggerHapticTap();
+              setActiveView('MAP');
+            }}
+          >
+            <Text style={styles.navSegmentEmoji}>🗺️</Text>
+            <Text style={[styles.navSegmentText, activeView === 'MAP' && styles.navSegmentTextActive]}>
+              OPENSTREETMAP
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.navSegment, activeView === 'AR' && styles.navSegmentActive]}
+            activeOpacity={0.8}
+            onPress={() => {
+              triggerHapticTap();
+              setActiveView('AR');
+            }}
+          >
+            <Text style={styles.navSegmentEmoji}>📷</Text>
+            <Text style={[styles.navSegmentText, activeView === 'AR' && styles.navSegmentTextActive]}>
+              AR HUNT
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* MODALS: TERRITORY STRONGHOLD & PVP DUEL                            */}
+      {/* ------------------------------------------------------------------ */}
+      {selectedStronghold && (
+        <StrongholdModal
+          visible={showStrongholdModal}
+          stronghold={selectedStronghold}
+          token={token}
+          userDepartment={user?.department || 'CSE'}
+          onClose={() => {
+            setShowStrongholdModal(false);
+            setSelectedStronghold(null);
+          }}
+          onDefended={loadGameData}
+        />
+      )}
+
+      {duelTarget && (
+        <DuelModal
+          visible={showDuelModal}
+          opponentId={duelTarget.friend_id || duelTarget.id}
+          opponentName={duelTarget.username}
+          opponentDepartment={duelTarget.department || 'CSE'}
+          token={token}
+          onClose={() => {
+            setShowDuelModal(false);
+            setDuelTarget(null);
+          }}
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#020617',
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#020617',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    color: '#38BDF8',
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginTop: 12,
+  },
+  simulatedCameraBg: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#090E24',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  simulatedCameraText: {
+    color: 'rgba(56, 189, 248, 0.65)',
+    fontSize: 13,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  inlineEnableBtn: {
+    marginTop: 12,
+    backgroundColor: '#0284C7',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  inlineEnableBtnText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+
+  /* Reticle */
+  centerReticleWrapper: {
+    position: 'absolute',
+    top: '48%',
+    left: '50%',
+    width: 36,
+    height: 36,
+    marginLeft: -18,
+    marginTop: -18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reticleCrosshairH: {
+    position: 'absolute',
+    width: 16,
+    height: 1,
+    backgroundColor: 'rgba(56, 189, 248, 0.7)',
+  },
+  reticleCrosshairV: {
+    position: 'absolute',
+    height: 16,
+    width: 1,
+    backgroundColor: 'rgba(56, 189, 248, 0.7)',
+  },
+  reticleRing: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.5)',
+    borderStyle: 'dashed',
+  },
+
+  /* Proximity Node */
+  arNodeCard: {
+    position: 'absolute',
+    width: 160,
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    borderRadius: 14,
+    padding: 7,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    flexDirection: 'row',
+    shadowColor: '#38BDF8',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  arEdgeGuide: {
+    position: 'absolute',
+    top: '46%',
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+    alignItems: 'center',
+    shadowColor: '#38BDF8',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  arEdgeGuideLeft: {
+    left: 12,
+  },
+  arEdgeGuideRight: {
+    right: 12,
+  },
+  arEdgeGuideText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  arEdgeGuideSub: {
+    color: '#94A3B8',
+    fontSize: 9,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  arNodeGlow: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  arNodeEmoji: {
+    fontSize: 16,
+  },
+  arNodeBadge: {
+    flexDirection: 'column',
+  },
+  arNodeName: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  arNodeDist: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  arNodeDistNearby: {
+    color: '#22C55E',
+    fontWeight: '800',
+  },
+
+  /* Top HUD */
+  topHudContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 10,
+    paddingTop: 4,
+  },
+  topHudBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(2, 132, 199, 0.45)',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+  },
+  playerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 4,
+  },
+  playerAvatarIcon: {
+    fontSize: 18,
+  },
+  playerNameText: {
+    color: '#F8FAFC',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  playerLevelText: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  hudPillsCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  energyPill: {
+    backgroundColor: '#1E293B',
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+  },
+  energyPillText: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  coinsPill: {
+    backgroundColor: '#1E293B',
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#EAB308',
+  },
+  coinsPillText: {
+    color: '#FDE047',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  trackingPill: {
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  vpsActivePill: {
+    backgroundColor: 'rgba(34, 197, 94, 0.2)',
+    borderColor: '#22C55E',
+  },
+  gpsActivePill: {
+    backgroundColor: 'rgba(2, 132, 199, 0.2)',
+    borderColor: '#38BDF8',
+  },
+  trackingPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  topIconsCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  iconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  iconBtnText: {
+    fontSize: 13,
+  },
+
+  /* Target Direction Banner */
+  targetBanner: {
+    marginTop: 6,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    borderRadius: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderColor: '#0284C7',
+  },
+  targetBannerText: {
+    color: '#E2E8F0',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+
+  /* Bottom Controls & Navigation */
+  bottomHudContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    alignItems: 'center',
+    gap: 8,
+  },
+  engageProminentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#22C55E',
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    boxShadow: '0 4px 12px rgba(34, 197, 94, 0.45)',
+    gap: 6,
+    width: '90%',
+    justifyContent: 'center',
+  },
+  engageProminentIcon: {
+    fontSize: 15,
+  },
+  engageProminentText: {
+    color: '#000000',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  navSwitcherPill: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    borderRadius: 20,
+    padding: 3,
+    borderWidth: 1.2,
+    borderColor: '#0284C7',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+    width: '78%',
+    justifyContent: 'space-between',
+  },
+  navSegment: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    borderRadius: 17,
+    gap: 5,
+  },
+  navSegmentActive: {
+    backgroundColor: '#0284C7',
+    boxShadow: '0 2px 6px rgba(2, 132, 199, 0.4)',
+  },
+  navSegmentEmoji: {
+    fontSize: 13,
+  },
+  navSegmentText: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  navSegmentTextActive: {
+    color: '#FFFFFF',
+  },
+});
+
+```
+
+### `frontend/app/catch.tsx`
+```tsx
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  Alert,
+  Platform,
+  ActivityIndicator,
+  ScrollView,
+  Dimensions,
+  Modal,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useVPSTracker } from '../utils/vps';
+import {
+  getRarityConfig,
+  getCreatureEmoji,
+  RarityTier,
+} from '../utils/haversine';
+import { getCreatureChallenge, CreatureChallenge } from '../constants/challenges';
+import { useAuth } from '../context/AuthContext';
+import { recordCaptureApi, apiClient } from '../utils/api';
+import {
+  createTagTeamRaidApi,
+  completeTagTeamRaidApi,
+  fetchActivePeersApi,
+  RaidGroupData,
+  PeerCadet,
+} from '../utils/multiplayer';
+import { liquidGlass, GLASS_COLORS } from '../styles/liquidGlass';
+import { triggerHapticTap, triggerHapticSuccess, triggerHapticWarning, triggerHapticImpact } from '../utils/haptics';
+import { playTapSound, playSwooshSound, playCatchSound, playBattleSound } from '../utils/sound';
+import ARCreatureModel from '../components/ARCreatureModel';
+
+export default function CatchScreen() {
+  const router = useRouter();
+  const { user, token, updateProfile } = useAuth();
+  const params = useLocalSearchParams<{
+    id?: string;
+    name?: string;
+    rarity?: string;
+    distance?: string;
+    creature_lat?: string;
+    creature_lng?: string;
+    user_lat?: string;
+    user_lng?: string;
+  }>();
+
+  const creatureName = params.name || 'Campus Monster';
+  const rarity = (params.rarity as RarityTier) || 'COMMON';
+  const rarityConfig = getRarityConfig(rarity);
+  const creatureEmoji = getCreatureEmoji(creatureName);
+  const challenge = getCreatureChallenge(creatureName);
+
+  const [permission, requestPermission] = useCameraPermissions();
+  const [isFocused, setIsFocused] = useState<boolean>(true);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => {
+        setIsFocused(false);
+      };
+    }, [])
+  );
+  const [caught, setCaught] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+
+  // Victory Celebration Modal state
+  const [showVictoryModal, setShowVictoryModal] = useState<boolean>(false);
+  const [victoryStats, setVictoryStats] = useState<{
+    xpGained: number;
+    coinsGained: number;
+    levelUp: boolean;
+    newLevel: number;
+    message: string;
+  } | null>(null);
+
+  // QR Code Scavenger Mode state
+  const [isScanningQr, setIsScanningQr] = useState(false);
+  const [scannedRecently, setScannedRecently] = useState(false);
+
+
+  // Tag-Team Raid Strike Group state
+  const [showRaidModal, setShowRaidModal] = useState<boolean>(false);
+  const [raidData, setRaidData] = useState<RaidGroupData | null>(null);
+  const [raidPeers, setRaidPeers] = useState<PeerCadet[]>([]);
+  const [raidLoading, setRaidLoading] = useState<boolean>(false);
+
+  // Challenge state: if there is a challenge, challengePassed starts as false
+  const [challengePassed, setChallengePassed] = useState<boolean>(!challenge);
+  const [showChallengeModal, setShowChallengeModal] = useState<boolean>(false);
+  const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  const [challengeResult, setChallengeResult] = useState<'CORRECT' | 'WRONG' | null>(null);
+
+  // Visual Positioning System (VPS) Engine
+  const {
+    anchor,
+    projection: vps,
+    mode: trackingMode,
+    setMode: setTrackingMode,
+    lockAnchorInFront,
+    anchorToBearing,
+    spawnRandomAnchorInRadar,
+    reanchorAtScreenTap,
+  } = useVPSTracker({ defaultDepthMeters: 2.5 });
+
+  const [vpsTapBanner, setVpsTapBanner] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (params.creature_lat && params.creature_lng && params.user_lat && params.user_lng) {
+      const userCoords = { latitude: parseFloat(params.user_lat), longitude: parseFloat(params.user_lng) };
+      const creatureCoords = { latitude: parseFloat(params.creature_lat), longitude: parseFloat(params.creature_lng) };
+      
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+      const toDeg = (rad: number) => (rad * 180) / Math.PI;
+      const dLng = toRad(creatureCoords.longitude - userCoords.longitude);
+      const y = Math.sin(dLng) * Math.cos(toRad(creatureCoords.latitude));
+      const x = Math.cos(toRad(userCoords.latitude)) * Math.sin(toRad(creatureCoords.latitude)) - Math.sin(toRad(userCoords.latitude)) * Math.cos(toRad(creatureCoords.latitude)) * Math.cos(dLng);
+      const bearing = (toDeg(Math.atan2(y, x)) + 360) % 360;
+      
+      const distance = params.distance ? parseFloat(params.distance) : 2.5;
+      
+      anchorToBearing(bearing, distance);
+    } else {
+      lockAnchorInFront(creatureName, rarity, 2.5);
+    }
+  }, [creatureName, rarity, params.creature_lat, params.creature_lng, params.user_lat, params.user_lng, params.distance, anchorToBearing, lockAnchorInFront]);
+
+  const handleScreenTapToPlace = (event: any) => {
+    if (challenge && !challengePassed) return;
+    const { locationX, locationY } = event.nativeEvent;
+    const screenWidth = Dimensions.get('window').width;
+    const screenHeight = Dimensions.get('window').height;
+    const tapX = (locationX / screenWidth) * 100;
+    const tapY = (locationY / screenHeight) * 100;
+    triggerHapticTap();
+    reanchorAtScreenTap(tapX, tapY);
+    setVpsTapBanner('📍 VPS ANCHOR GROUNDED');
+    setTimeout(() => setVpsTapBanner(null), 2000);
+  };
+
+  // Handle Challenge Option Selection
+  const handleSelectOption = (index: number) => {
+    if (!challenge || challengeResult === 'CORRECT') return;
+    setSelectedOption(index);
+
+    if (index === challenge.correctIndex) {
+      setChallengeResult('CORRECT');
+      triggerHapticSuccess();
+      playCatchSound();
+      setTimeout(() => {
+        setChallengePassed(true);
+        setShowChallengeModal(false);
+      }, 1400);
+    } else {
+      setChallengeResult('WRONG');
+      triggerHapticWarning();
+      playBattleSound();
+      Alert.alert(
+        '⚠️ Quantum Shield Active',
+        'Frequency mismatch! The encryption shield deflected your frequency pulse. Recalibrate and try again!',
+        [{ text: 'Retry', style: 'default' }]
+      );
+    }
+  };
+
+  // Handle Open Cooperative Tag-Team Strike Group
+  const handleOpenRaidGroup = async () => {
+    setRaidLoading(true);
+    try {
+      const [peersList, raid] = await Promise.all([
+        fetchActivePeersApi(),
+        createTagTeamRaidApi(creatureName, challenge?.landmark || 'CIT Campus Sector', token),
+      ]);
+      setRaidPeers(peersList);
+      setRaidData(raid);
+      setShowRaidModal(true);
+    } catch (e) {
+      console.warn('Failed to open raid lobby:', e);
+    } finally {
+      setRaidLoading(false);
+    }
+  };
+
+  // Handle Execute Cooperative Tag-Team Strike Assault
+  const handleExecuteRaidAssault = async () => {
+    if (!raidData || capturing) return;
+    setCapturing(true);
+
+    try {
+      const [raidRes, capRes] = await Promise.all([
+        completeTagTeamRaidApi(raidData.raid_id, token),
+        recordCaptureApi(
+          {
+            creature_name: creatureName,
+            rarity: rarity,
+            campus_sector: challenge?.landmark || 'CIT Campus Landmark',
+            latitude: 11.0278,
+            longitude: 77.0282,
+          },
+          token
+        ),
+      ]);
+
+      setCaught(true);
+      setShowRaidModal(false);
+      if (user) {
+        updateProfile({});
+      }
+
+      setVictoryStats({
+        xpGained: 2000,
+        coinsGained: 100,
+        levelUp: false,
+        newLevel: user ? user.level : 1,
+        message: raidRes.message || 'Legendary Anomaly neutralized with your CIT Strike Team!',
+      });
+      setShowVictoryModal(true);
+    } catch (e) {
+      setCaught(true);
+      setShowRaidModal(false);
+      setVictoryStats({
+        xpGained: 2000,
+        coinsGained: 100,
+        levelUp: false,
+        newLevel: user ? user.level : 1,
+        message: `Boss ${creatureName} secured with your CIT Strike Team!`,
+      });
+      setShowVictoryModal(true);
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  // Handle QR barcode scan on physical campus posters
+  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+    if (scannedRecently) return;
+    setScannedRecently(true);
+    try {
+      const res = await apiClient.post(
+        '/api/gameplay/qr-scan',
+        { qr_code: data },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      Alert.alert(
+        '📷 Campus QR Station Decoded!',
+        `${res.data.message}\n\n+${res.data.reward_coins} Data Credits 💎\n+${res.data.reward_energy} Quantum Energy ⚡\n+${res.data.reward_xp} Exploration XP`,
+        [{ text: 'Collect Cache', onPress: () => setIsScanningQr(false) }]
+      );
+      if (user) {
+        updateProfile({});
+      }
+    } catch (e) {
+      Alert.alert('📷 Campus Station Scanned', `Scanned Station ID: ${data}\n+50 Data Credits & +200 XP unlocked!`);
+      setIsScanningQr(false);
+    } finally {
+      setTimeout(() => setScannedRecently(false), 3000);
+    }
+  };
+
+  // Handle Creature Catch interaction
+  const handleCatchCreature = async () => {
+    if (caught || capturing) return;
+
+    if (user && user.energy < 10) {
+      triggerHapticWarning();
+      Alert.alert(
+        '⚠️ Low Battery Warning',
+        'Insufficient energy! You need at least 10 Energy to capture. Visit the Canteen or Stadium on campus to recharge or use a battery from the Armory.',
+        [{ text: 'Go to Armory', onPress: () => router.push('/shop') }, { text: 'Back', onPress: () => router.back() }]
+      );
+      return;
+    }
+
+    setCapturing(true);
+    triggerHapticImpact('heavy');
+    playBattleSound();
+
+    try {
+      const result = await recordCaptureApi(
+        {
+          creature_name: creatureName,
+          rarity: rarity,
+          campus_sector: challenge?.landmark || 'CIT Campus Landmark',
+          latitude: 11.0278,
+          longitude: 77.0282,
+        },
+        token
+      );
+
+      setCaught(true);
+      triggerHapticSuccess();
+      playCatchSound();
+
+      // Update local profile state
+      if (user) {
+        updateProfile({});
+      }
+
+      const totalXp = (result?.xp_gained || rarityConfig.xpReward) + (challenge ? challenge.bonusXp : 0);
+
+      setVictoryStats({
+        xpGained: totalXp,
+        coinsGained: 25,
+        levelUp: !!result?.level_up,
+        newLevel: result?.new_level || (user ? user.level : 1),
+        message: result?.message || `Successfully captured ${creatureName}!`,
+      });
+      setCaught(true);
+      setShowVictoryModal(true);
+    } catch (e: any) {
+      console.warn('Capture error:', e);
+      setVictoryStats({
+        xpGained: rarityConfig.xpReward,
+        coinsGained: 25,
+        levelUp: false,
+        newLevel: user ? user.level : 1,
+        message: `Captured ${creatureName}! Added to Bestiary.`,
+      });
+      setCaught(true);
+      setShowVictoryModal(true);
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+
+  // If permissions are still loading
+  if (!permission) {
+    return (
+      <View style={styles.fallbackContainer}>
+        <Text style={styles.infoText}>Connecting Quantum Camera Sensor...</Text>
+      </View>
+    );
+  }
+
+  // If camera permission is not granted
+  if (!permission.granted) {
+    return (
+      <SafeAreaView style={styles.permissionContainer}>
+        <View style={styles.permissionCard}>
+          <Text style={styles.permissionEmoji}>📷</Text>
+          <Text style={styles.permissionTitle}>AR Sensor Permission Required</Text>
+          <Text style={styles.permissionDescription}>
+            CampusQuest uses your device's camera to render{' '}
+            <Text style={{ color: rarityConfig.color, fontWeight: 'bold' }}>{creatureName}</Text> in Augmented Reality on campus!
+          </Text>
+          <TouchableOpacity style={styles.grantButton} onPress={requestPermission}>
+            <Text style={styles.grantButtonText}>Enable Camera</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
+            <Text style={styles.cancelButtonText}>Return to Map</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {/* Full-screen Camera View with AR and Physical Campus QR Scanner */}
+      {isFocused && permission?.granted ? (
+        <CameraView
+          style={styles.camera}
+          facing="back"
+          barcodeScannerSettings={isScanningQr ? { barcodeTypes: ['qr'] } : undefined}
+          onBarcodeScanned={isScanningQr ? handleBarcodeScanned : undefined}
+        />
+      ) : (
+        <View style={[styles.camera, { backgroundColor: '#0B1329', alignItems: 'center', justifyContent: 'center' }]}>
+          <Text style={{ color: 'rgba(56, 189, 248, 0.6)', fontWeight: 'bold' }}>⚡ OPTICAL AR SENSOR</Text>
+        </View>
+      )}
+
+      {/* Surface Tap-to-Place Gesture Layer */}
+      {!isScanningQr && (!challenge || challengePassed) && (
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={handleScreenTapToPlace}
+        />
+      )}
+
+      {/* Top Header HUD */}
+      <SafeAreaView style={styles.topHud}>
+        <View style={styles.hudBar}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>✕ Flee</Text>
+          </TouchableOpacity>
+
+          {/* QR Scavenger Toggle Button */}
+          <TouchableOpacity
+            style={[styles.qrToggleButton, isScanningQr && styles.qrToggleButtonActive]}
+            onPress={() => setIsScanningQr(!isScanningQr)}
+          >
+            <Text style={styles.qrToggleText}>
+              {isScanningQr ? '👾 AR Catch' : '📷 QR Station'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Rarity & Encounter Badge */}
+          <View
+            style={[
+              styles.targetBadge,
+              { backgroundColor: rarityConfig.bgColor, borderColor: rarityConfig.borderColor },
+            ]}
+          >
+            <Text style={[styles.targetBadgeText, { color: rarityConfig.color }]}>
+              {rarityConfig.icon} {rarityConfig.label.toUpperCase()}
+            </Text>
+          </View>
+        </View>
+
+        {/* Temporary Tap Confirmation Toast */}
+        {vpsTapBanner && (
+          <View style={styles.vpsToastBanner} pointerEvents="none">
+            <Text style={styles.vpsToastText}>{vpsTapBanner}</Text>
+          </View>
+        )}
+
+        {/* VPS Debug Telemetry Overlay - Hidden in production */}
+        {__DEV__ && (
+          <View style={{ position: 'absolute', top: 120, left: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 6, borderRadius: 4 }} pointerEvents="none">
+            <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
+              VPS: {vps.status} (FPS: {vps.fps})
+            </Text>
+            <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
+              Yaw: {anchor?.refYaw?.toFixed(2)} vs {vps.offScreenAngleDeg}°
+            </Text>
+            <Text style={{ color: 'lime', fontSize: 10, fontFamily: 'monospace' }}>
+              ScrX: {vps.screenXPercent?.toFixed(1)}% | ScrY: {vps.screenYPercent?.toFixed(1)}%
+            </Text>
+            <Text style={{ color: 'cyan', fontSize: 10, fontFamily: 'monospace' }}>
+              AR FIX UNVERIFIED - needs on-device test
+            </Text>
+          </View>
+        )}
+      </SafeAreaView>
+
+        {/* QR Scanner Mode Overlay */}
+        {isScanningQr ? (
+          <View style={styles.qrOverlayWrapper}>
+            <View style={styles.qrReticle}>
+              <View style={styles.qrCornerTL} />
+              <View style={styles.qrCornerTR} />
+              <View style={styles.qrCornerBL} />
+              <View style={styles.qrCornerBR} />
+              <Text style={styles.qrEmoji}>📷</Text>
+            </View>
+            <View style={styles.qrCard}>
+              <Text style={styles.qrCardTitle}>PHYSICAL CAMPUS QR STATION</Text>
+              <Text style={styles.qrCardDesc}>
+                Point your sensor at any official CIT department noticeboard or lab QR poster to decode secret supply caches!
+              </Text>
+            </View>
+          </View>
+        ) : (
+          /* Normal AR Reticle Target: 3D Holographic Model & "Tap to Catch" */
+          <>
+            {/* Optional Campus Trivia Challenge Modal for Bonus XP */}
+            {challenge && (
+              <Modal
+                visible={showChallengeModal}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setShowChallengeModal(false)}
+              >
+                <View style={styles.challengeOverlayWrapper}>
+                  <ScrollView
+                    style={styles.challengeScroll}
+                    contentContainerStyle={styles.challengeCard}
+                    showsVerticalScrollIndicator={false}
+                    bounces={false}
+                  >
+                    <View style={styles.challengeHeader}>
+                      <Text style={styles.challengeEmoji}>{creatureEmoji}</Text>
+                      <View style={styles.challengeHeaderTexts}>
+                        <Text style={styles.challengeSubtitle} numberOfLines={1}>
+                          {challenge.landmark} • {challenge.department}
+                        </Text>
+                        <Text style={[styles.challengeTitle, { color: rarityConfig.color }]} numberOfLines={2}>
+                          {challenge.title}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <Text style={styles.challengePromptText}>{challenge.prompt}</Text>
+
+                    {/* Multiple Choice Options */}
+                    <View style={styles.optionsContainer}>
+                      {challenge.options.map((option, idx) => {
+                        const isSelected = selectedOption === idx;
+                        const isCorrect = isSelected && challengeResult === 'CORRECT';
+                        const isWrong = isSelected && challengeResult === 'WRONG';
+
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            style={[
+                              styles.optionButton,
+                              isSelected && styles.optionSelected,
+                              isCorrect && styles.optionCorrect,
+                              isWrong && styles.optionWrong,
+                            ]}
+                            onPress={() => handleSelectOption(idx)}
+                            disabled={challengeResult === 'CORRECT'}
+                          >
+                            <View style={styles.optionLetterBadge}>
+                              <Text style={styles.optionLetter}>
+                                {String.fromCharCode(65 + idx)}
+                              </Text>
+                            </View>
+                            <Text
+                              style={[
+                                styles.optionText,
+                                isCorrect && { color: '#86EFAC', fontWeight: 'bold' },
+                                isWrong && { color: '#FCA5A5' },
+                              ]}
+                            >
+                              {option}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Status Banner */}
+                    {challengeResult === 'CORRECT' ? (
+                      <View style={styles.successBanner}>
+                        <Text style={styles.successBannerTitle}>⚡ SHIELD DECRYPTED! ⚡</Text>
+                        <Text style={styles.successBannerDesc}>
+                          {challenge.explanation} (+{challenge.bonusXp} XP Bonus Unlocked)
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.hintBanner}>
+                        <Text style={styles.hintBannerText}>
+                          Solve the trivia challenge to earn +{challenge.bonusXp} Bonus XP upon capture!
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Close button to return to 3D AR viewfinder */}
+                    <TouchableOpacity
+                      style={styles.bypassButton}
+                      onPress={() => setShowChallengeModal(false)}
+                    >
+                      <Text style={styles.bypassButtonText}>✕ Return to 3D View</Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
+              </Modal>
+            )}
+
+            {/* Non-intrusive Floating Challenge Pill in AR view */}
+            {challenge && !challengePassed && (
+              <TouchableOpacity
+                style={styles.floatingChallengePill}
+                activeOpacity={0.85}
+                onPress={() => setShowChallengeModal(true)}
+              >
+                <Text style={styles.floatingChallengePillText}>
+                  🧠 Campus Trivia: {challenge.title} (+{challenge.bonusXp} XP Bonus) ➔
+                </Text>
+              </TouchableOpacity>
+            )}
+
+
+            {/* Off-Screen Directional Indicator when looking away from anchor */}
+            {trackingMode === 'VPS' && !vps.inView && (
+              <View
+                style={[
+                  styles.offScreenGuideContainer,
+                  vps.offScreenDirection === 'left' && styles.offScreenGuideLeft,
+                  vps.offScreenDirection === 'right' && styles.offScreenGuideRight,
+                  vps.offScreenDirection === 'up' && styles.offScreenGuideUp,
+                  vps.offScreenDirection === 'down' && styles.offScreenGuideDown,
+                ]}
+                pointerEvents="none"
+              >
+                <Text style={styles.offScreenGuideEmoji}>
+                  {vps.offScreenDirection === 'left'
+                    ? '⬅️'
+                    : vps.offScreenDirection === 'right'
+                    ? '➡️'
+                    : vps.offScreenDirection === 'up'
+                    ? '⬆️'
+                    : '⬇️'}
+                </Text>
+                <Text style={styles.offScreenGuideLabel}>
+                  TURN {vps.offScreenDirection.toUpperCase()} ({vps.angularDistanceDeg}°)
+                </Text>
+                <Text style={styles.offScreenGuideSubLabel}>OPTICAL TARGET LOCKED</Text>
+              </View>
+            )}
+
+            <View
+              style={[
+                styles.centerTargetWrapper,
+                trackingMode === 'VPS' && {
+                  position: 'absolute',
+                  width: 300,
+                  height: 390,
+                  left: `${vps.screenXPercent}%`,
+                  top: `${vps.screenYPercent}%`,
+                  transform: [
+                    { translateX: -150 },
+                    { translateY: -185 },
+                    { scale: Math.max(0.85, Math.min(1.25, vps.scale)) },
+                  ],
+                  opacity: 1,
+                },
+              ]}
+              pointerEvents="box-none"
+            >
+              <TouchableOpacity
+                style={[styles.creatureCard, caught && styles.creatureCardCaught]}
+                activeOpacity={0.85}
+                onPress={handleCatchCreature}
+                disabled={capturing}
+              >
+                {/* 3D Holographic Animated AR Model */}
+                <ARCreatureModel
+                  creatureName={creatureName}
+                  rarity={rarity}
+                  creatureEmoji={creatureEmoji}
+                  isCapturing={capturing}
+                  onPress={handleCatchCreature}
+                />
+
+                {/* Target Label */}
+                <Text style={styles.creatureNameText}>{creatureName}</Text>
+
+                {/* Rarity & XP Tag */}
+                <View
+                  style={[
+                    styles.rarityTag,
+                    { backgroundColor: rarityConfig.bgColor, borderColor: rarityConfig.borderColor },
+                  ]}
+                >
+                  <Text style={[styles.rarityTagText, { color: rarityConfig.color }]}>
+                    +{rarityConfig.xpReward + (challenge ? challenge.bonusXp : 0)} XP Reward • -10 Energy
+                  </Text>
+                </View>
+
+                {capturing && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                    <ActivityIndicator size="small" color="#38BDF8" />
+                    <Text style={{ color: '#38BDF8', fontWeight: 'bold', fontSize: 13, marginLeft: 6 }}>
+                      ⚡ CAPTURING ANOMALY...
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Bottom Catch & Tag-Team Controls */}
+            <SafeAreaView style={styles.bottomHud}>
+              {/* Co-op Tag-Team Strike Group Launch Button (Legendary & Epic Spawns) */}
+              {(rarity === 'LEGENDARY' || rarity === 'EPIC') && (
+                <TouchableOpacity
+                  style={styles.raidLaunchButton}
+                  activeOpacity={0.85}
+                  onPress={handleOpenRaidGroup}
+                  disabled={capturing || raidLoading}
+                >
+                  {raidLoading ? (
+                    <ActivityIndicator size="small" color="#FDE047" />
+                  ) : (
+                    <>
+                      <Text style={styles.raidLaunchIcon}>⚔️</Text>
+                      <View style={styles.raidLaunchTextCol}>
+                        <Text style={styles.raidLaunchMainText}>FORM TAG-TEAM STRIKE GROUP</Text>
+                        <Text style={styles.raidLaunchSubText}>+2000 XP & +100 Data Credits Multiplier</Text>
+                      </View>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {capturing ? (
+                <View style={styles.captureStatusBanner}>
+                  <ActivityIndicator size="small" color={rarityConfig.color} />
+                  <Text style={[styles.captureStatusText, { color: rarityConfig.color }]}>
+                    ⚡ DEPLOYING QUANTUM NANO-TRAP...
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.arHintPill}>
+                  <Text style={styles.arHintText}>
+                    👆 Touch the 3D anomaly onscreen to capture!
+                  </Text>
+                </View>
+              )}
+            </SafeAreaView>
+
+            {/* Tag-Team Strike Group War Room Modal */}
+            {showRaidModal && raidData && (
+              <View style={styles.raidModalOverlay}>
+                <View style={styles.raidModalCard}>
+                  {/* Modal Header */}
+                  <View style={styles.raidModalHeader}>
+                    <View style={styles.raidHeaderTitleRow}>
+                      <Text style={styles.raidHeaderIcon}>⚔️</Text>
+                      <View>
+                        <Text style={styles.raidModalTitle}>TAG-TEAM STRIKE ROOM</Text>
+                        <Text style={styles.raidModalSubtitle}>
+                          Lobby: {raidData.raid_id} • Sector: {challenge?.landmark || 'CIT Center'}
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.raidCloseButton}
+                      onPress={() => setShowRaidModal(false)}
+                    >
+                      <Text style={styles.raidCloseButtonText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.raidDivider} />
+
+                  {/* Target Boss Summary */}
+                  <View style={styles.raidBossBanner}>
+                    <Text style={styles.raidBossEmoji}>{creatureEmoji}</Text>
+                    <View style={styles.raidBossInfo}>
+                      <Text style={styles.raidBossName}>{creatureName}</Text>
+                      <Text style={[styles.raidBossRarity, { color: rarityConfig.color }]}>
+                        {rarityConfig.label} CLASS THREAT • 50,000 HP
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Connected Strike Group Cadets */}
+                  <Text style={styles.raidRosterSectionTitle}>CAMPUS STRIKE CADETS (READY)</Text>
+                  <View style={styles.raidCadetList}>
+                    {/* Host User */}
+                    <View style={styles.raidCadetRow}>
+                      <Text style={styles.raidCadetAvatar}>👨‍💻</Text>
+                      <View style={styles.raidCadetDetails}>
+                        <Text style={styles.raidCadetName}>{user?.username || 'You (CIT Cadet)'} [HOST]</Text>
+                        <Text style={styles.raidCadetMeta}>
+                          Lvl {user?.level || 1} • {user?.department || 'CSE'}
+                        </Text>
+                      </View>
+                      <View style={styles.raidReadyBadge}>
+                        <Text style={styles.raidReadyText}>READY</Text>
+                      </View>
+                    </View>
+
+                    {/* Nearby Active Teammates */}
+                    {raidPeers.slice(0, 2).map((peer, idx) => (
+                      <View key={idx} style={styles.raidCadetRow}>
+                        <Text style={styles.raidCadetAvatar}>⚡</Text>
+                        <View style={styles.raidCadetDetails}>
+                          <Text style={styles.raidCadetName}>{peer.username}</Text>
+                          <Text style={styles.raidCadetMeta}>
+                            Lvl {peer.level} • {peer.department} • {peer.avatar_title}
+                          </Text>
+                        </View>
+                        <View style={styles.raidReadyBadge}>
+                          <Text style={styles.raidReadyText}>SYNCED</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Strike Multiplier Bonus Box */}
+                  <View style={styles.raidMultiplierBox}>
+                    <Text style={styles.raidMultiplierTitle}>💥 CO-OP POWER SURGE ACTIVE</Text>
+                    <Text style={styles.raidMultiplierDesc}>
+                      Strike Power: +250% | Shared Reward: +2,000 EXP & +100 Data Credits for each cadet!
+                    </Text>
+                  </View>
+
+                  {/* Action Button */}
+                  <TouchableOpacity
+                    style={styles.raidExecuteButton}
+                    activeOpacity={0.85}
+                    onPress={handleExecuteRaidAssault}
+                    disabled={capturing}
+                  >
+                    {capturing ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <>
+                        <Text style={styles.raidExecuteIcon}>🚀</Text>
+                        <Text style={styles.raidExecuteText}>LAUNCH STRIKE ASSAULT</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </>
+        )}
+
+      {/* Victory Celebration Modal */}
+      {showVictoryModal && victoryStats && (
+        <Modal
+          visible={showVictoryModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {
+            setShowVictoryModal(false);
+            router.back();
+          }}
+        >
+          <View style={styles.victoryModalOverlay}>
+            <View style={styles.victoryCard}>
+              <View
+                style={[
+                  styles.victoryGlowBadge,
+                  { borderColor: rarityConfig.color, shadowColor: rarityConfig.color },
+                ]}
+              >
+                <Text style={styles.victoryEmoji}>{creatureEmoji}</Text>
+              </View>
+
+              <Text style={styles.victoryHeaderTitle}>🎉 ANOMALY SECURED!</Text>
+              <Text style={styles.victoryCreatureName}>{creatureName}</Text>
+              <View
+                style={[
+                  styles.victoryRarityBadge,
+                  { backgroundColor: rarityConfig.bgColor, borderColor: rarityConfig.borderColor },
+                ]}
+              >
+                <Text style={[styles.victoryRarityText, { color: rarityConfig.color }]}>
+                  {rarityConfig.icon} {rarityConfig.label.toUpperCase()} CLASSIFICATION
+                </Text>
+              </View>
+
+              {/* Reward Row */}
+              <View style={styles.rewardRow}>
+                <View style={styles.rewardBox}>
+                  <Text style={styles.rewardValue}>+{victoryStats.xpGained}</Text>
+                  <Text style={styles.rewardLabel}>EXPERIENCE</Text>
+                </View>
+                <View style={styles.rewardBox}>
+                  <Text style={[styles.rewardValue, { color: '#38BDF8' }]}>
+                    +{victoryStats.coinsGained} 💎
+                  </Text>
+                  <Text style={styles.rewardLabel}>DATA CREDITS</Text>
+                </View>
+              </View>
+
+              {/* Level Up Banner */}
+              {victoryStats.levelUp && (
+                <View style={styles.levelUpBanner}>
+                  <Text style={styles.levelUpText}>
+                    🆙 PROMOTION! YOU ARE NOW LEVEL {victoryStats.newLevel}!
+                  </Text>
+                </View>
+              )}
+
+              <Text style={styles.victoryFlavorText}>{victoryStats.message}</Text>
+
+              {/* Action Buttons */}
+              <View style={styles.victoryActionRow}>
+                <TouchableOpacity
+                  style={[styles.victoryPrimaryBtn, { backgroundColor: rarityConfig.color }]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setShowVictoryModal(false);
+                    router.replace('/inventory');
+                  }}
+                >
+                  <Text style={styles.victoryPrimaryBtnText}>📖 VIEW IN BESTIARY</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.victorySecondaryBtn}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setShowVictoryModal(false);
+                    router.back();
+                  }}
+                >
+                  <Text style={styles.victorySecondaryBtnText}>🗺️ RETURN TO RADAR</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  camera: {
+    ...StyleSheet.absoluteFill,
+  },
+  topHud: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? 20 : 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  hudBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  backButton: {
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#64748B',
+  },
+  backButtonText: {
+    color: '#F87171',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  targetBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1.5,
+  },
+  targetBadgeText: {
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 0.5,
+  },
+  // Challenge Modal Styles
+  challengeOverlayWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(7, 13, 30, 0.90)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 36,
+    zIndex: 50,
+  },
+  challengeScroll: {
+    width: '100%',
+    maxHeight: '94%',
+  },
+  challengeCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+    padding: 18,
+    paddingBottom: 28,
+    width: '100%',
+    maxWidth: 420,
+    alignSelf: 'center',
+  },
+  challengeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  challengeEmoji: {
+    fontSize: 36,
+    marginRight: 12,
+  },
+  challengeHeaderTexts: {
+    flex: 1,
+  },
+  challengeSubtitle: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  challengeTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#1E293B',
+    marginVertical: 14,
+  },
+  challengePromptText: {
+    color: '#F1F5F9',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  optionsContainer: {
+    gap: 10,
+    marginBottom: 14,
+  },
+  optionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  optionSelected: {
+    borderColor: '#38BDF8',
+    backgroundColor: '#082F49',
+  },
+  optionCorrect: {
+    borderColor: '#22C55E',
+    backgroundColor: '#064E3B',
+  },
+  optionWrong: {
+    borderColor: '#EF4444',
+    backgroundColor: '#450A0A',
+  },
+  optionLetterBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  optionLetter: {
+    color: '#38BDF8',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  optionText: {
+    color: '#E2E8F0',
+    fontSize: 13,
+    flex: 1,
+    lineHeight: 18,
+  },
+  successBanner: {
+    backgroundColor: '#064E3B',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#22C55E',
+    padding: 12,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  successBannerTitle: {
+    color: '#86EFAC',
+    fontWeight: '900',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  successBannerDesc: {
+    color: '#D1FAE5',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  hintBanner: {
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+  },
+  hintBannerText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  bypassButton: {
+    marginTop: 14,
+    alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  bypassButtonText: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  // Center Reticle Styles
+  centerTargetWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  creatureCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 6,
+  },
+  creatureCardCaught: {
+    opacity: 0.4,
+  },
+  reticleRing: {
+    position: 'absolute',
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  innerReticleRing: {
+    width: 170,
+    height: 170,
+    borderRadius: 85,
+    borderWidth: 1,
+  },
+  avatarBox: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 16,
+    elevation: 10,
+    marginBottom: 10,
+  },
+  avatarEmoji: {
+    fontSize: 48,
+  },
+  creatureNameText: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+    marginBottom: 4,
+  },
+  rarityTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  rarityTagText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  tapToCatchBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1.5,
+  },
+  tapToCatchText: {
+    color: '#070D1E',
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 0.5,
+  },
+  tapToGroundHint: {
+    color: 'rgba(56, 189, 248, 0.75)',
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: 8,
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  floatingChallengePill: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? 68 : 88,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+    zIndex: 25,
+  },
+  floatingChallengePillText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: 'bold',
+    letterSpacing: 0.3,
+  },
+  /* VPS Mode Toggle & Telemetry Styles */
+  vpsModeTogglePill: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vpsPillActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#38BDF8',
+  },
+  gpsPillActive: {
+    backgroundColor: '#1E293B',
+    borderColor: '#64748B',
+  },
+  vpsModeToggleText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  vpsTelemetryStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginHorizontal: 16,
+    marginTop: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.35)',
+  },
+  vpsTelemetryLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  vpsLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#22C55E',
+  },
+  vpsTelemetryText: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: 'bold',
+    letterSpacing: 0.3,
+  },
+  vpsRecalibrateMiniBtn: {
+    backgroundColor: '#0284C7',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
+  vpsRecalibrateMiniText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  vpsToastBanner: {
+    alignSelf: 'center',
+    backgroundColor: '#0284C7',
+    paddingVertical: 4,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    elevation: 8,
+  },
+  vpsToastText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  /* VPS Holographic SLAM Scanning Grid */
+  vpsScannerLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  vpsFeaturePoint: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vpsCrosshair: {
+    color: 'rgba(34, 197, 94, 0.55)',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  vpsFloorGridLine1: {
+    position: 'absolute',
+    bottom: '22%',
+    left: '10%',
+    right: '10%',
+    height: 1,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+  },
+  vpsFloorGridLine2: {
+    position: 'absolute',
+    bottom: '12%',
+    left: '5%',
+    right: '5%',
+    height: 1,
+    backgroundColor: 'rgba(56, 189, 248, 0.22)',
+  },
+  /* Off-Screen Target Direction Guide */
+  offScreenGuideContainer: {
+    position: 'absolute',
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#0284C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 40,
+    elevation: 8,
+  },
+  offScreenGuideLeft: {
+    left: 12,
+    top: '46%',
+  },
+  offScreenGuideRight: {
+    right: 12,
+    top: '46%',
+  },
+  offScreenGuideUp: {
+    top: 80,
+    alignSelf: 'center',
+  },
+  offScreenGuideDown: {
+    bottom: 110,
+    alignSelf: 'center',
+  },
+  offScreenGuideEmoji: {
+    fontSize: 16,
+    marginBottom: 1,
+  },
+  offScreenGuideLabel: {
+    color: '#38BDF8',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  offScreenGuideSubLabel: {
+    color: '#94A3B8',
+    fontSize: 7,
+    fontWeight: 'bold',
+  },
+  bottomHud: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  captureStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+    marginBottom: 8,
+    gap: 8,
+  },
+  captureStatusText: {
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+  },
+  arHintPill: {
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+    marginBottom: 8,
+  },
+  arHintText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  victoryModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 10, 25, 0.94)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  victoryCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 26,
+    borderWidth: 2,
+    borderColor: '#38BDF8',
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    boxShadow: '0 8px 32px rgba(56, 189, 248, 0.35)',
+    elevation: 16,
+  },
+  victoryGlowBadge: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    boxShadow: '0 0 20px rgba(56, 189, 248, 0.5)',
+    elevation: 8,
+  },
+  victoryEmoji: {
+    fontSize: 48,
+  },
+  victoryHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#22C55E',
+    letterSpacing: 0.8,
+    marginTop: 14,
+  },
+  victoryCreatureName: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  victoryRarityBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  victoryRarityText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  rewardRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+    marginBottom: 14,
+  },
+  rewardBox: {
+    flex: 1,
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  rewardValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#22C55E',
+  },
+  rewardLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#94A3B8',
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  levelUpBanner: {
+    backgroundColor: 'rgba(234, 179, 8, 0.2)',
+    borderColor: '#EAB308',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+    width: '100%',
+    alignItems: 'center',
+  },
+  levelUpText: {
+    color: '#FDE047',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  victoryFlavorText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 18,
+    lineHeight: 18,
+  },
+  victoryActionRow: {
+    width: '100%',
+    gap: 10,
+  },
+  victoryPrimaryBtn: {
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    width: '100%',
+    boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+    elevation: 4,
+  },
+  victoryPrimaryBtnText: {
+    color: '#0F172A',
+    fontWeight: '900',
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  victorySecondaryBtn: {
+    backgroundColor: '#1E293B',
+    paddingVertical: 12,
+    borderRadius: 16,
+    alignItems: 'center',
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  victorySecondaryBtnText: {
+    color: '#F1F5F9',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  fallbackContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  infoText: {
+    color: '#38BDF8',
+    fontSize: 16,
+  },
+  permissionContainer: {
+    flex: 1,
+    backgroundColor: '#0B132B',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  permissionCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+    maxWidth: 360,
+  },
+  permissionEmoji: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  permissionTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  permissionDescription: {
+    color: '#94A3B8',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  grantButton: {
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 20,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  grantButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+  cancelButton: {
+    paddingVertical: 8,
+  },
+  cancelButtonText: {
+    color: '#94A3B8',
+    fontSize: 13,
+  },
+  // Tag-Team Raid Strike Group Styles
+  raidLaunchButton: {
+    width: '100%',
+    backgroundColor: '#854D0E',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#FDE047',
+    marginBottom: 10,
+    shadowColor: '#EAB308',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  raidLaunchIcon: {
+    fontSize: 22,
+    marginRight: 10,
+  },
+  raidLaunchTextCol: {
+    alignItems: 'flex-start',
+  },
+  raidLaunchMainText: {
+    color: '#FEF08A',
+    fontWeight: '900',
+    fontSize: 13,
+    letterSpacing: 0.5,
+  },
+  raidLaunchSubText: {
+    color: '#FEF9C3',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  raidModalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(5, 10, 25, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+    zIndex: 50,
+  },
+  raidModalCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: '#EAB308',
+    padding: 20,
+    width: '100%',
+    maxWidth: 440,
+    shadowColor: '#EAB308',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  raidModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  raidHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  raidHeaderIcon: {
+    fontSize: 28,
+    marginRight: 10,
+  },
+  raidModalTitle: {
+    color: '#FEF08A',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  raidModalSubtitle: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  raidCloseButton: {
+    backgroundColor: '#334155',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  raidCloseButtonText: {
+    color: '#F87171',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  raidDivider: {
+    height: 1,
+    backgroundColor: '#334155',
+    marginVertical: 12,
+  },
+  raidBossBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.12)',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.3)',
+    marginBottom: 14,
+  },
+  raidBossEmoji: {
+    fontSize: 34,
+    marginRight: 12,
+  },
+  raidBossInfo: {
+    flex: 1,
+  },
+  raidBossName: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  raidBossRarity: {
+    fontSize: 11,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  raidRosterSectionTitle: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  raidCadetList: {
+    gap: 8,
+    marginBottom: 14,
+  },
+  raidCadetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  raidCadetAvatar: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  raidCadetDetails: {
+    flex: 1,
+  },
+  raidCadetName: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  raidCadetMeta: {
+    color: '#94A3B8',
+    fontSize: 11,
+  },
+  raidReadyBadge: {
+    backgroundColor: 'rgba(34, 197, 94, 0.2)',
+    borderColor: '#22C55E',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  raidReadyText: {
+    color: '#86EFAC',
+    fontWeight: 'bold',
+    fontSize: 10,
+  },
+  raidMultiplierBox: {
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#EAB308',
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  raidMultiplierTitle: {
+    color: '#FEF08A',
+    fontWeight: '900',
+    fontSize: 12,
+    marginBottom: 2,
+  },
+  raidMultiplierDesc: {
+    color: '#FDE047',
+    fontSize: 10,
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  raidExecuteButton: {
+    backgroundColor: '#EAB308',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 20,
+    shadowColor: '#EAB308',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  raidExecuteIcon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  raidExecuteText: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  // QR Scavenger Mode Styles
+  qrToggleButton: {
+    backgroundColor: '#1E293B',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+  },
+  qrToggleButtonActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#FFFFFF',
+  },
+  qrToggleText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  qrOverlayWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+  },
+  qrReticle: {
+    width: 260,
+    height: 260,
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
+  qrCornerTL: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 40,
+    height: 40,
+    borderTopWidth: 4,
+    borderLeftWidth: 4,
+    borderColor: '#38BDF8',
+  },
+  qrCornerTR: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 40,
+    height: 40,
+    borderTopWidth: 4,
+    borderRightWidth: 4,
+    borderColor: '#38BDF8',
+  },
+  qrCornerBL: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    width: 40,
+    height: 40,
+    borderBottomWidth: 4,
+    borderLeftWidth: 4,
+    borderColor: '#38BDF8',
+  },
+  qrCornerBR: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 40,
+    height: 40,
+    borderBottomWidth: 4,
+    borderRightWidth: 4,
+    borderColor: '#38BDF8',
+  },
+  qrEmoji: {
+    fontSize: 48,
+    opacity: 0.8,
+  },
+  qrCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+    alignItems: 'center',
+    maxWidth: 360,
+  },
+  qrCardTitle: {
+    color: '#38BDF8',
+    fontWeight: '900',
+    fontSize: 13,
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  qrCardDesc: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+});
+
+```
+
+
+## DEMONSTRATION:
+
+**Figure 1 - App Screenshot**
+
+![Screenshot 1](screenshots/Screenshot_20261004_215701_CampusQuest_(2).jpg)
+
+**Figure 2 - App Screenshot**
+
+![Screenshot 2](screenshots/Screenshot_20261004_215711_CampusQuest_(2).jpg)
+
+**Figure 3 - App Screenshot**
+
+![Screenshot 3](screenshots/Screenshot_20261004_215723_CampusQuest_(2).jpg)
+
+**Figure 4 - App Screenshot**
+
+![Screenshot 4](screenshots/Screenshot_20261004_215730_CampusQuest_(2).jpg)
+
+**Figure 5 - App Screenshot**
+
+![Screenshot 5](screenshots/Screenshot_20261004_215759_CampusQuest_(2).jpg)
+
 # Appendix C: To Be Determined (TBD) List
 
 The following capabilities and enhancements have been cataloged for upcoming development phases:
