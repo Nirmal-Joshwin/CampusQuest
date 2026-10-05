@@ -1017,7 +1017,6 @@ flowchart TD
 Demonstrates physical execution nodes, networking channels, and operational container boundaries.
 
 ```mermaid
-deploymentDiagram
 flowchart TD
     subgraph ClientDevice [Student Smartphone Android / iOS]
         nodeClient["Mobile App Sandbox\n(React Native 0.86 / Expo SDK 57)\n- Native 3D Map View\n- Camera AR Layer\n- Local Storage (SecureStore)"]
